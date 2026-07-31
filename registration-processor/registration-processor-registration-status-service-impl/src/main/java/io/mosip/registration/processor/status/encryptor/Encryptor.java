@@ -6,6 +6,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 
+import io.mosip.kernel.core.util.DateUtils2;
 import io.mosip.registration.processor.packet.manager.constant.CryptomanagerConstant;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -19,7 +20,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.kernel.core.exception.ExceptionUtils;
 import io.mosip.kernel.core.logger.spi.Logger;
 import io.mosip.kernel.core.util.CryptoUtil;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.code.ApiName;
 import io.mosip.registration.processor.core.code.EventId;
 import io.mosip.registration.processor.core.code.EventName;
@@ -109,7 +109,7 @@ public class Encryptor {
 			request.setRequest(cryptomanagerRequestDto);
 
 			LocalDateTime localdatetime = LocalDateTime
-					.parse(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
+					.parse(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
 			request.setRequesttime(localdatetime);
 			request.setVersion(env.getProperty(REG_PROC_APPLICATION_VERSION));
 
@@ -161,16 +161,7 @@ public class Encryptor {
 				throw new EncryptionFailureException(
 						EncryptionFailureExceptionConstant.MOSIP_ENCRYPTION_FAILURE_ERROR_CODE.getErrorCode(),
 						httpClientException.getResponseBodyAsString());
-			} else if (e.getCause() instanceof HttpServerErrorException) {
-				HttpServerErrorException httpServerException = (HttpServerErrorException) e.getCause();
-				description.setMessage(PlatformErrorMessages.RPR_PGS_ENCRYPTOR_INVLAID_DATA_EXCEPTION.getMessage()
-						+ httpServerException.getResponseBodyAsString());
-				description.setCode(PlatformErrorMessages.RPR_PGS_ENCRYPTOR_INVLAID_DATA_EXCEPTION.getCode());
-
-				throw new EncryptionFailureException(
-						EncryptionFailureExceptionConstant.MOSIP_ENCRYPTION_FAILURE_ERROR_CODE.getErrorCode(),
-						httpServerException.getResponseBodyAsString());
-			} else {
+			}  else {
 				description.setMessage(
 						PlatformErrorMessages.RPR_PGS_ENCRYPTOR_INVLAID_DATA_EXCEPTION.getMessage() + e.getMessage());
 				description.setCode(PlatformErrorMessages.RPR_PGS_ENCRYPTOR_INVLAID_DATA_EXCEPTION.getCode());

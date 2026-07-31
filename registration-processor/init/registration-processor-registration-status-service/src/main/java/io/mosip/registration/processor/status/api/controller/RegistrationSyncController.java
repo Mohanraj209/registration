@@ -2,7 +2,7 @@ package io.mosip.registration.processor.status.api.controller;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.mosip.kernel.core.util.DateUtils;
+import io.mosip.kernel.core.util.DateUtils2;
 import io.mosip.registration.processor.core.constant.ResponseStatusCode;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
 import io.mosip.registration.processor.core.util.DigitalSignatureUtility;
@@ -108,15 +108,17 @@ public class RegistrationSyncController {
 					env.getProperty(REG_SYNC_SERVICE_ID), syncResponseList)) {
 				syncResponseList = syncRegistrationService.sync(registrationSyncRequestDTO.getRequest(), referenceId, timeStamp);
 			}
+			RegSyncResponseDTO responseDto = buildRegistrationSyncResponse(syncResponseList);
+			String res = objectMapper.writeValueAsString(responseDto);
 			if (isEnabled) {
-				RegSyncResponseDTO responseDto = buildRegistrationSyncResponse(syncResponseList);
+
 				HttpHeaders headers = new HttpHeaders();
 				headers.add(RESPONSE_SIGNATURE,
-						digitalSignatureUtility.getDigitalSignature(objectMapper.writeValueAsString(responseDto)));
-				return ResponseEntity.ok().headers(headers).body(responseDto);
+						digitalSignatureUtility.getDigitalSignature(res));
+				return ResponseEntity.ok().headers(headers).body(res);
 			}
 
-			return ResponseEntity.ok().body(buildRegistrationSyncResponse(syncResponseList));
+			return ResponseEntity.ok().body(res);
 
 		} catch (JsonProcessingException e) {
 			throw new RegStatusAppException(PlatformErrorMessages.RPR_RGS_DATA_VALIDATION_FAILED, e);
@@ -155,15 +157,16 @@ public class RegistrationSyncController {
 					env.getProperty(REG_SYNC_SERVICE_ID), syncResponseList)) {
 				syncResponseList = syncRegistrationService.syncV2(registrationSyncRequestDTO.getRequest(), referenceId, timeStamp);
 			}
+			RegSyncResponseDTO responseDto = buildRegistrationSyncResponse(syncResponseList);
+			String res = objectMapper.writeValueAsString(responseDto);
 			if (isEnabled) {
-				RegSyncResponseDTO responseDto = buildRegistrationSyncResponse(syncResponseList);
 				HttpHeaders headers = new HttpHeaders();
 				headers.add(RESPONSE_SIGNATURE,
-						digitalSignatureUtility.getDigitalSignature(objectMapper.writeValueAsString(responseDto)));
-				return ResponseEntity.ok().headers(headers).body(responseDto);
+						digitalSignatureUtility.getDigitalSignature(res));
+				return ResponseEntity.ok().headers(headers).body(res);
 			}
 
-			return ResponseEntity.ok().body(buildRegistrationSyncResponse(syncResponseList));
+			return ResponseEntity.ok().body(res);
 
 		} catch (JsonProcessingException e) {
 			throw new RegStatusAppException(PlatformErrorMessages.RPR_RGS_DATA_VALIDATION_FAILED, e);
@@ -177,7 +180,7 @@ public class RegistrationSyncController {
 		if (Objects.isNull(response.getId())) {
 			response.setId(env.getProperty(REG_SYNC_SERVICE_ID));
 		}
-		response.setResponsetime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		response.setResponsetime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		response.setVersion(env.getProperty(REG_SYNC_APPLICATION_VERSION));
 		List<SyncErrorDTO> syncErrorDTOList = new ArrayList<>();
 		List<SyncResponseDto> syncResponseList = new ArrayList<>();

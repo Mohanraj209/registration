@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 
 import io.mosip.kernel.core.logger.spi.Logger;
+import io.mosip.kernel.core.util.DateUtils2;
 import io.mosip.kernel.core.util.JsonUtils;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
 import io.mosip.registration.processor.core.logger.RegProcessorLogger;
@@ -29,12 +30,12 @@ import io.mosip.kernel.biometrics.entities.BiometricRecord;
 import io.mosip.kernel.core.exception.BiometricSignatureValidationException;
 import io.mosip.kernel.core.http.RequestWrapper;
 import io.mosip.kernel.core.http.ResponseWrapper;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.kernel.core.util.StringUtils;
 import io.mosip.registration.processor.core.code.ApiName;
 import io.mosip.registration.processor.core.constant.JsonConstant;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.PacketManagerException;
+import io.mosip.registration.processor.core.exception.util.PlatformSuccessMessages;
 import io.mosip.registration.processor.core.packet.dto.FieldValue;
 import io.mosip.registration.processor.core.packet.dto.JWTSignatureVerifyRequestDto;
 import io.mosip.registration.processor.core.packet.dto.JWTSignatureVerifyResponseDto;
@@ -73,6 +74,7 @@ public class BiometricsSignatureValidator {
 		}
 
 		List<BIR> birs = biometricRecord.getSegments();
+
 		for (BIR bir : birs) {
 			HashMap<String, String> othersInfo = bir.getOthers();
 			if (othersInfo == null) {
@@ -139,7 +141,7 @@ public class BiometricsSignatureValidator {
 		request.setVersion("1.0");
 		DateTimeFormatter format = DateTimeFormatter.ofPattern(env.getProperty(DATETIME_PATTERN));
 		LocalDateTime localdatetime = LocalDateTime
-				.parse(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
+				.parse(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
 		request.setRequesttime(localdatetime);
 
 		ResponseWrapper<?> responseWrapper = (ResponseWrapper<?>) registrationProcessorRestService

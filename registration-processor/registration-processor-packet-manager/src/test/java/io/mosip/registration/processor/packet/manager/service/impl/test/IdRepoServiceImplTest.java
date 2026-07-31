@@ -1,12 +1,15 @@
 package io.mosip.registration.processor.packet.manager.service.impl.test;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Matchers.any;
 
 import javax.swing.text.Utilities;
 
+import io.mosip.registration.processor.core.code.ApiName;
+import io.mosip.registration.processor.core.idrepo.dto.ResponseDTO;
 import org.apache.commons.io.IOUtils;
 import org.json.simple.JSONObject;
 import org.junit.Before;
@@ -15,10 +18,13 @@ import org.junit.runner.RunWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.powermock.api.mockito.PowerMockito;
 import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
 import org.powermock.modules.junit4.PowerMockRunner;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.mosip.registration.processor.core.http.ResponseWrapper;
 import io.mosip.registration.processor.core.idrepo.dto.IdResponseDTO;
@@ -43,6 +49,10 @@ public class IdRepoServiceImplTest {
 	@InjectMocks
 	private IdRepoServiceImpl idRepoService;
 
+	@Spy
+	private ObjectMapper mapper = new ObjectMapper();
+
+	
 	/**
 	 * Sets the up.
 	 *
@@ -51,7 +61,6 @@ public class IdRepoServiceImplTest {
 	 */
 	@Before
 	public void setUp() throws Exception {
-
 		IdentityJsonValues jv = new IdentityJsonValues();
 		jv.setValue("1");
 		IdResponseDTO dto = new IdResponseDTO();
@@ -68,12 +77,13 @@ public class IdRepoServiceImplTest {
 	 * @throws Exception
 	 *             the exception
 	 */
-	@Test
+	/*@Test
 	public void testgetIdJsonFromIDRepo() throws Exception {
+		Mockito.when(mapper.writeValueAsString(Mockito.any())).thenReturn("{}");
 		JSONObject matchedDemographicIdentity = idRepoService.getIdJsonFromIDRepo("", "Identity");
 		assertNull(matchedDemographicIdentity);
 
-	}
+	}*/
 
 	/**
 	 * Testget UIN by RID.
@@ -83,6 +93,7 @@ public class IdRepoServiceImplTest {
 	 */
 	@Test
 	public void testgetUINByRID() throws Exception {
+		Mockito.when(mapper.writeValueAsString(Mockito.any())).thenReturn("");
 		JSONObject demoJson = new JSONObject();
 		demoJson.put("UIN", "1");
 		PowerMockito.mockStatic(JsonUtil.class);
@@ -110,7 +121,7 @@ public class IdRepoServiceImplTest {
 	 */
 	@Test
 	public void testfindUinFromIdrepo() throws Exception {
-
+		Mockito.when(mapper.writeValueAsString(Mockito.any())).thenReturn("");
 		JSONObject demoJson = new JSONObject();
 		demoJson.put("UIN", "1");
 		PowerMockito.mockStatic(JsonUtil.class);
@@ -119,5 +130,64 @@ public class IdRepoServiceImplTest {
 		String matchedDemographicIdentity = idRepoService.findUinFromIdrepo("", "Identity");
 		assertNull(matchedDemographicIdentity);
 
+	}
+
+	@Test
+	public void testGetIdJsonFromIDRepoWhenResponseNotNull() throws Exception {
+		IdResponseDTO dto = new IdResponseDTO();
+		dto.setId("123333");
+		dto.setVersion("v1");
+		dto.setTimestamp("2025-12-11T18:10:00Z");
+		ResponseDTO responseDTO = new ResponseDTO();
+		dto.setResponse(responseDTO);
+		ResponseWrapper<IdResponseDTO> response = new ResponseWrapper<>();
+		response.setResponse(dto);
+
+		Mockito.when(restClientService.getApi(
+						Mockito.eq(ApiName.RETRIEVEIDENTITYFROMRID),
+						anyList(),
+						anyString(),
+						anyString(),
+						Mockito.eq(ResponseWrapper.class)))
+				.thenReturn(response);
+
+		Mockito.when(mapper.writeValueAsString(any())).thenReturn("{\"Identity\":{\"UIN\":\"1234\"}}");
+
+		JSONObject identity = new JSONObject();
+		JSONObject demo = new JSONObject();
+		demo.put("UIN", "1234");
+		identity.put("Identity", demo);
+
+		PowerMockito.mockStatic(JsonUtil.class);
+		PowerMockito.when(JsonUtil.objectMapperReadValue(anyString(), Mockito.eq(JSONObject.class)))
+				.thenReturn(identity);
+
+		PowerMockito.when(JsonUtil.getJSONObject(identity, "Identity"))
+				.thenReturn(demo);
+		JSONObject result = idRepoService.getIdJsonFromIDRepo("123", "Identity");
+		assertEquals("1234", result.get("UIN"));
+	}
+
+	@Test
+	public void testGetIdJsonFromIDRepoWhenResponseNull() throws Exception {
+
+		ResponseWrapper<IdResponseDTO> response = new ResponseWrapper<>();
+		response.setResponse(null);
+
+		Mockito.when(restClientService.getApi(any(), anyList(), anyString(), anyString(), any()))
+				.thenReturn(response);
+		JSONObject result = idRepoService.getIdJsonFromIDRepo("123", "Identity");
+		assertNull(result);
+	}
+
+	@Test
+	public void testGetIdResponseFromIDRepoWhenResponseNull() throws Exception {
+		ResponseWrapper<ResponseDTO> response = new ResponseWrapper<>();
+		response.setResponse(null);
+
+		Mockito.when(restClientService.getApi(any(), anyList(), anyString(), anyString(), any()))
+				.thenReturn(response);
+		ResponseDTO result = idRepoService.getIdResponseFromIDRepo("123");
+		assertNull(result);
 	}
 }

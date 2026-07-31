@@ -9,8 +9,11 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.time.format.DateTimeParseException;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 
+import io.mosip.kernel.core.util.DateUtils2;
 import org.apache.commons.io.IOUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -29,9 +32,10 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 
 import io.mosip.kernel.core.exception.ServiceError;
-import io.mosip.kernel.core.util.DateUtils;
+import io.mosip.registration.processor.core.common.rest.dto.ErrorDTO;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.PacketDecryptionFailureException;
+import io.mosip.registration.processor.core.http.ResponseWrapper;
 import io.mosip.registration.processor.core.spi.restclient.RegistrationProcessorRestClientService;
 import io.mosip.registration.processor.packet.manager.PacketManagerBootApplication;
 import io.mosip.registration.processor.packet.manager.dto.CryptomanagerResponseDto;
@@ -41,7 +45,7 @@ import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequest
 @RunWith(PowerMockRunner.class)
 @PowerMockIgnore({"com.sun.org.apache.xerces.*", "javax.xml.*", "org.xml.*", "javax.management.*"})
 @SpringBootTest(classes = PacketManagerBootApplication.class)
-@PrepareForTest({ DateUtils.class, IOUtils.class })
+@PrepareForTest({ DateUtils2.class, IOUtils.class })
 public class DecryptorTest {
 
 	
@@ -89,8 +93,8 @@ public class DecryptorTest {
 	@Test(expected = PacketDecryptionFailureException.class)
 	public void decryptDateTimeParseExceptionTest()
 			throws PacketDecryptionFailureException, ApisResourceAccessException, IOException {
-		PowerMockito.mockStatic(DateUtils.class);
-		PowerMockito.when(DateUtils.getUTCCurrentDateTimeString(anyString())).thenThrow(DateTimeParseException.class);
+		PowerMockito.mockStatic(DateUtils2.class);
+		PowerMockito.when(DateUtils2.getUTCCurrentDateTimeString(anyString())).thenThrow(DateTimeParseException.class);
 		decryptor.decrypt("84071493960000320190110145452", "refid", inputStream);
 	}
 
@@ -117,13 +121,19 @@ public class DecryptorTest {
 	@Test(expected = PacketDecryptionFailureException.class)
 	public void HttpServerErrorExceptionTest()
 			throws FileNotFoundException, ApisResourceAccessException, PacketDecryptionFailureException {
-
+		List<ServiceError> errors=new ArrayList<>();
+		ServiceError e=new ServiceError("HttpStatus.INTERNAL_SERVER_ERROR", "KER-FSE-004:encrypted data is corrupted or not base64 encoded");
+		errors.add(e);
+	
+		CryptomanagerResponseDto c=new CryptomanagerResponseDto();
+		c.setErrors(errors);
+		
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpServerErrorException httpServerErrorException = new HttpServerErrorException(
 				HttpStatus.INTERNAL_SERVER_ERROR, "KER-FSE-004:encrypted data is corrupted or not base64 encoded");
 		Mockito.when(apisResourceAccessException.getCause()).thenReturn(httpServerErrorException);
 		Mockito.when(restClientService.postApi(any(), any(), any(), any(), any()))
-				.thenThrow(apisResourceAccessException);
+				.thenReturn(c);
 
 		decryptor.decrypt("84071493960000320190110145452", "refid", inputStream);
 

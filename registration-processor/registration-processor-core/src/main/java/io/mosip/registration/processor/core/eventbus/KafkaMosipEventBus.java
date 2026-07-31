@@ -9,18 +9,24 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
-import brave.Span;
-import io.mosip.registration.processor.core.tracing.EventTracingHandler;
+import io.mosip.kernel.core.util.DateUtils2;
+import io.mosip.registration.processor.core.cache.CaffeineCacheManager;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.apache.kafka.clients.consumer.ConsumerRecords;
+import org.slf4j.MDC;
 
+import brave.Span;
+import io.mosip.kernel.core.logger.spi.Logger;
 import io.mosip.registration.processor.core.abstractverticle.EventDTO;
+import io.mosip.registration.processor.core.abstractverticle.HealthCheckDTO;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.abstractverticle.MosipEventBus;
 import io.mosip.registration.processor.core.exception.ConfigurationServerFailureException;
 import io.mosip.registration.processor.core.exception.MessageExpiredException;
+import io.mosip.registration.processor.core.logger.RegProcessorLogger;
 import io.mosip.registration.processor.core.spi.eventbus.EventHandler;
+import io.mosip.registration.processor.core.tracing.EventTracingHandler;
 import io.vertx.core.AsyncResult;
 import io.vertx.core.CompositeFuture;
 import io.vertx.core.Future;
@@ -36,9 +42,6 @@ import io.vertx.kafka.client.consumer.OffsetAndMetadata;
 import io.vertx.kafka.client.consumer.impl.KafkaConsumerRecordsImpl;
 import io.vertx.kafka.client.producer.KafkaProducer;
 import io.vertx.kafka.client.producer.KafkaProducerRecord;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 
 /**
  * Implementation of MosipEventBus interface for Kafka based event bus
@@ -48,7 +51,7 @@ import org.slf4j.MDC;
 public class KafkaMosipEventBus implements MosipEventBus {
 
 	/** The logger. */
-	private Logger logger = LoggerFactory.getLogger(KafkaMosipEventBus.class);
+	private Logger logger = RegProcessorLogger.getLogger(KafkaMosipEventBus.class);
 
 	/** The vertx instance that will be used by this event bus */
 	private Vertx vertx = null;
@@ -62,6 +65,9 @@ public class KafkaMosipEventBus implements MosipEventBus {
 	private int pollFrequency;
 
 	private EventTracingHandler eventTracingHandler;
+
+	//Added the caffeine cache to control the propagation of duplicate packet to next stage if duplicate packet is received to the same pod due to kafka rebalancing.
+	private CaffeineCacheManager caffeineCacheManager;
 
 	/**
 	 * Instantiates a new kafka mosip event bus.
@@ -78,8 +84,8 @@ public class KafkaMosipEventBus implements MosipEventBus {
 	 * @param eventTracingHandler
 	 */
 	public KafkaMosipEventBus(Vertx vertx, String bootstrapServers, String groupId,
-			String commitType, String maxPollRecords, int pollFrequency, EventTracingHandler eventTracingHandler) {
-
+			String commitType, String maxPollRecords, String maxPollInterval, int pollFrequency, EventTracingHandler eventTracingHandler, CaffeineCacheManager caffeineCacheManager) {
+		this.caffeineCacheManager = caffeineCacheManager;
 		validateCommitType(commitType);
 		this.vertx = vertx;
 		this.commitType = commitType;
@@ -95,6 +101,7 @@ public class KafkaMosipEventBus implements MosipEventBus {
 		consumerConfig.put("group.id", groupId);
 		consumerConfig.put("auto.offset.reset", "latest");
 		consumerConfig.put("max.poll.records", maxPollRecords);
+		consumerConfig.put("max.poll.interval.ms", maxPollInterval);
 		if (commitType.equals("auto"))
 			consumerConfig.put("enable.auto.commit", "true");
 		else
@@ -110,8 +117,8 @@ public class KafkaMosipEventBus implements MosipEventBus {
 		producerConfig.put("acks", "1");
 		this.kafkaProducer = KafkaProducer.create(vertx, producerConfig);
 
-		logger.info("KafkaMosipEventBus loaded with configuration: bootstrapServers: {} groupId: {} commitType: {}",
-				bootstrapServers , groupId , commitType);
+		logger.info("KafkaMosipEventBus loaded with configuration: bootstrapServers: {} groupId: {} commitType: {} maxPollInterval: {}",
+				bootstrapServers , groupId , commitType, maxPollInterval);
 	}
 
 	/*
@@ -258,6 +265,14 @@ public class KafkaMosipEventBus implements MosipEventBus {
 			.compose((Void) -> {
 				List<Future<Void>> futures = IntStream.range(0, consumerRecords.size())
 					.mapToObj(consumerRecords::recordAt)
+						.filter(record -> {
+							String key = record.key();
+							if (key != null && caffeineCacheManager.checkAndPutIfAbsent(key)) {
+								logger.error("Duplicate record with key '{}' found. Skipping processing.", key);
+								return false;
+							}
+							return true;
+						})
 					.map(record -> processRecord(toAddress, eventHandler, record, false))
 					.collect(Collectors.toList());
 
@@ -330,8 +345,8 @@ public class KafkaMosipEventBus implements MosipEventBus {
 						new MessageBusAddress(toAddress, messageDTO.getReg_type());
 					JsonObject jsonObject = JsonObject.mapFrom(messageDTO);
 					KafkaProducerRecord<String, String> producerRecord = 
-						KafkaProducerRecord.create(messageBusToAddress.getAddress(), 
-							messageDTO.getRid(), jsonObject.toString());
+						KafkaProducerRecord.create(messageBusToAddress.getAddress(),
+								getKafkaKey(messageDTO, messageBusToAddress), jsonObject.toString());
 					this.eventTracingHandler.writeHeaderOnKafkaProduce(producerRecord, span);
 					kafkaProducer.write(producerRecord, handler -> {
 						MDC.setContextMap(mdc);
@@ -428,5 +443,55 @@ public class KafkaMosipEventBus implements MosipEventBus {
 			else
 				promise.fail("Partition resuming failed for " + topicPartition.getPartition());
 		});
+	}
+
+	@Override
+	public void consumerHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+		HealthCheckDTO healthCheckDTO = new HealthCheckDTO();
+		String timeStamp = address + DateUtils2.formatToISOString(DateUtils2.getUTCCurrentDateTime());
+		logger.debug("Consumer health check started {}",
+				timeStamp);
+		kafkaConsumer.listTopics(f -> {
+			if (f.succeeded()) {
+				healthCheckDTO.setEventBusConnected(true);
+
+			} else {
+				healthCheckDTO.setEventBusConnected(false);
+				healthCheckDTO.setFailureReason(f.cause().getMessage());
+			}
+			logger.debug("Consumer health check ended with isEventBusConnected {} {}", timeStamp,
+					healthCheckDTO.isEventBusConnected());
+			eventHandler.handle(healthCheckDTO);
+		});
+
+	}
+
+	@Override
+	public void senderHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+		// To be implemented correctly when we move to later versions of vertx and
+		// current vertx kafka client does not offer any non intrusive way to check the
+		// health of produce
+		HealthCheckDTO healthCheckDTO = new HealthCheckDTO();
+		if (kafkaProducer != null) {
+			healthCheckDTO.setEventBusConnected(true);
+		} else {
+			healthCheckDTO.setEventBusConnected(false);
+			healthCheckDTO.setFailureReason("Failed kafkaProducer");
+		}
+		eventHandler.handle(healthCheckDTO);
+	}
+	
+	// Kafka key to be created for sending to the message to topic and will be used by caffeine to avoid kafka rebalancing
+	private String getKafkaKey(MessageDTO messageDTO, MessageBusAddress messageBusToAddress) {
+		StringBuilder keyBuilder = new StringBuilder();
+		keyBuilder.append(messageDTO.getRid())
+				.append('_')
+				.append(messageBusToAddress.getAddress());
+
+		if (messageDTO.getMessageBusAddress() != null && messageDTO.getMessageBusAddress().getAddress() != null) {
+			keyBuilder.append('_').append(messageDTO.getMessageBusAddress().getAddress());
+		}
+
+		return keyBuilder.toString();
 	}
 }

@@ -9,7 +9,6 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 import io.mosip.kernel.core.exception.ExceptionUtils;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.constant.ProviderStageName;
 import io.mosip.registration.processor.packet.storage.dto.FieldResponseDto;
 import io.mosip.registration.processor.packet.storage.utils.PacketManagerService;
@@ -70,7 +69,6 @@ public class AuditUtility {
 	 * 
 	 *
 	 */
-	@Async
 	public void saveAuditDetails(String registrationId, String process) {
 		try {
 			regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),

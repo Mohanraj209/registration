@@ -59,6 +59,8 @@ public enum PlatformSuccessMessages {
 	// Biometric Authentication Success Messages
 	RPR_PKR_BIOMETRIC_AUTHENTICATION(PlatformConstants.RPR_BIOMETRIC_AUTHENTICATION_MODULE + "000",
 			"Biometric Authentication Success"),
+	
+	
 
 	// Bio-De-dupe Success messages
 	/** The Constant PACKET_BIODEDUPE_SUCCESS. */
@@ -77,14 +79,24 @@ public enum PlatformSuccessMessages {
 
 	RPR_SENT_TO_REPROCESS_SUCCESS(PlatformConstants.RPR_REPROCESSOR_VERTICLE + "001", "sent to reprocess Success"),
 
+	RPR_SENT_TO_REPROCESS_RESTART_FROM_STAGE_SUCCESS(PlatformConstants.RPR_REPROCESSOR_VERTICLE + "002",
+			"sent to reprocess restart from stage Success"),
+
 	RPR_WORKFLOW_INTERNAL_ACTION_SUCCESS(PlatformConstants.RPR_WORKFLOW_INTERNAL_ACTION + "000",
 			"Workflow internal action completed successfully"),
 
 	RPR_WORKFLOW_ACTION_SERVICE_SUCCESS(PlatformConstants.RPR_WORKFLOW_ACTION_SERVICE + "000",
 			"Processed the workflow action - %s"),
 
+    RPR_WORKFLOW_INSTANCE_SERVICE_SUCCESS(PlatformConstants.RPR_WORKFLOW_INSTANCE_SERVICE + "000",
+            "Processed the workflow instance"),
+
 	RPR_WORKFLOW_ACTION_API_SUCCESS(PlatformConstants.RPR_WORKFLOW_ACTION_API + "000",
 			"Process the workflow action success"),
+
+    RPR_WORKFLOW_INSTANCE_API_SUCCESS(PlatformConstants.RPR_WORKFLOW_INSTANCE_API + "000",
+            "Process the workflow instance success"),
+
 	RPR_WORKFLOW_SEARCH_API_SUCCESS(PlatformConstants.RPR_WORKFLOW_SEARCH_API + "000",
 			"Process the workflow search success"),
 	RPR_WORKFLOW_ACTION_JOB_SUCCESS(PlatformConstants.RPR_WORKFLOW_ACTION_JOB + "000", "Workflow action job success"),

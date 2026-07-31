@@ -6,13 +6,14 @@ import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import io.mosip.registration.processor.core.logger.RegProcessorLogger;
+import io.mosip.kernel.core.logger.spi.Logger;
 import org.springframework.context.annotation.AnnotationConfigApplicationContext;
 import org.springframework.core.env.MutablePropertySources;
 
 import io.mosip.kernel.core.exception.ExceptionUtils;
 import io.mosip.registration.processor.core.abstractverticle.MosipVerticleAPIManager;
+
 import io.mosip.registration.processor.stages.executor.config.StagesConfig;
 import io.mosip.registration.processor.stages.executor.util.StageClassesUtil;
 
@@ -22,7 +23,7 @@ import io.mosip.registration.processor.stages.executor.util.StageClassesUtil;
 public class MosipStageExecutorApplication {
 	
 	/** The Constant regProcLogger. */
-	private static final Logger regProcLogger = LoggerFactory.getLogger(MosipStageExecutorApplication.class);
+	private static final Logger regProcLogger = RegProcessorLogger.getLogger(MosipStageExecutorApplication.class);
 
 	/**
 	 * main method to launch external stage application.
@@ -71,7 +72,7 @@ public class MosipStageExecutorApplication {
 									ExceptionUtils.getStackTrace(e));
 						}
 					}));
-					executorService.shutdown();
+					executorService.close();
 				} else {
 					regProcLogger.error("No stage class is found. Please make sure correct correct stage class base packages are specified in properties and stages are added to classpath/dependencies.");
 				}

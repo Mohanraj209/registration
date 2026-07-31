@@ -1,11 +1,13 @@
 package io.mosip.registration.processor.stages.uigenerator;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyDouble;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import java.io.ByteArrayInputStream;
@@ -22,6 +24,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import io.mosip.registration.processor.core.code.*;
+import io.mosip.registration.processor.core.constant.ProviderStageName;
+import io.mosip.registration.processor.core.exception.PacketManagerNonRecoverableException;
+import io.mosip.registration.processor.packet.manager.dto.IdRequestDto;
+import io.mosip.registration.processor.packet.storage.utils.Utility;
+import io.mosip.registration.processor.packet.storage.utils.Utilities;
+import io.mosip.registration.processor.stages.uingenerator.dto.VidResponseDto;
 import org.apache.commons.io.IOUtils;
 import org.assertj.core.util.Lists;
 import org.json.JSONException;
@@ -30,7 +40,12 @@ import org.junit.Before;
 import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.mockito.*;
+import org.mockito.ArgumentCaptor;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.MockitoAnnotations;
+import org.mockito.Spy;
 import org.powermock.api.mockito.PowerMockito;
 import org.powermock.core.classloader.annotations.PowerMockIgnore;
 import org.powermock.core.classloader.annotations.PrepareForTest;
@@ -41,8 +56,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.gson.Gson;
 
 import io.mosip.kernel.biometrics.constant.BiometricType;
 import io.mosip.kernel.biometrics.constant.QualityType;
@@ -55,14 +70,10 @@ import io.mosip.kernel.core.util.HMACUtils2;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.kernel.dataaccess.hibernate.constant.HibernateErrorCode;
 import io.mosip.registration.processor.core.abstractverticle.EventDTO;
+import io.mosip.registration.processor.core.abstractverticle.HealthCheckDTO;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.abstractverticle.MosipEventBus;
-import io.mosip.registration.processor.core.code.ApiName;
-import io.mosip.registration.processor.core.code.EventId;
-import io.mosip.registration.processor.core.code.EventName;
-import io.mosip.registration.processor.core.code.EventType;
-import io.mosip.registration.processor.core.code.RegistrationExceptionTypeCode;
 import io.mosip.registration.processor.core.common.rest.dto.ErrorDTO;
 import io.mosip.registration.processor.core.constant.MappingJsonConstants;
 import io.mosip.registration.processor.core.constant.RegistrationType;
@@ -78,9 +89,11 @@ import io.mosip.registration.processor.core.spi.packetmanager.PacketInfoManager;
 import io.mosip.registration.processor.core.spi.restclient.RegistrationProcessorRestClientService;
 import io.mosip.registration.processor.core.util.JsonUtil;
 import io.mosip.registration.processor.core.util.RegistrationExceptionMapperUtil;
+import io.mosip.registration.processor.packet.manager.dto.IdRequestDto;
 import io.mosip.registration.processor.packet.manager.dto.IdResponseDTO;
 import io.mosip.registration.processor.packet.manager.dto.ResponseDTO;
 import io.mosip.registration.processor.packet.manager.exception.IdrepoDraftException;
+import io.mosip.registration.processor.packet.manager.exception.IdrepoDraftReprocessableException;
 import io.mosip.registration.processor.packet.manager.idreposervice.IdRepoService;
 import io.mosip.registration.processor.packet.manager.idreposervice.IdrepoDraftService;
 import io.mosip.registration.processor.packet.storage.dto.ApplicantInfoDto;
@@ -103,7 +116,7 @@ import io.vertx.core.Handler;
 import io.vertx.core.Vertx;
 
 @RunWith(PowerMockRunner.class)
-@PrepareForTest({ IOUtils.class, HMACUtils2.class, Utilities.class, Gson.class })
+@PrepareForTest({ IOUtils.class, HMACUtils2.class, Utilities.class, Utility.class})
 @PowerMockIgnore({"com.sun.org.apache.xerces.*", "javax.xml.*", "org.xml.*", "javax.management.*", "javax.net.ssl.*" })
 public class UinGeneratorStageTest {
 
@@ -122,13 +135,13 @@ public class UinGeneratorStageTest {
 
 				@Override
 				public void consume(MessageBusAddress fromAddress,
-						EventHandler<EventDTO, Handler<AsyncResult<MessageDTO>>> eventHandler) {
+									EventHandler<EventDTO, Handler<AsyncResult<MessageDTO>>> eventHandler) {
 
 				}
 
 				@Override
 				public void consumeAndSend(MessageBusAddress fromAddress, MessageBusAddress toAddress,
-						EventHandler<EventDTO, Handler<AsyncResult<MessageDTO>>> eventHandler) {
+										   EventHandler<EventDTO, Handler<AsyncResult<MessageDTO>>> eventHandler) {
 
 				}
 
@@ -136,6 +149,19 @@ public class UinGeneratorStageTest {
 				public void send(MessageBusAddress toAddress, MessageDTO message) {
 
 				}
+
+				@Override
+				public void consumerHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+
+
+				}
+
+				@Override
+				public void senderHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+
+
+				}
+
 			};
 		}
 
@@ -196,7 +222,10 @@ public class UinGeneratorStageTest {
 	private InternalRegistrationStatusDto registrationStatusDto = new InternalRegistrationStatusDto();
 
 	@Mock
-	private Utilities utility;
+	private Utility utility;
+
+    @Mock
+    private Utilities utilities;
 
 	@Mock
 	private IdRepoService idRepoService;
@@ -212,6 +241,7 @@ public class UinGeneratorStageTest {
 
 	/** The Constant CONFIG_SERVER_URL. */
 	private static final String CONFIG_SERVER_URL = "url";
+	private static final String IDREPO_STATUS = "DRAFTED";
 
 	private String identityMappingjsonString;
 
@@ -238,7 +268,7 @@ public class UinGeneratorStageTest {
 		ReflectionTestUtils.setField(uinGeneratorStage, "workerPoolSize", 10);
 		ReflectionTestUtils.setField(uinGeneratorStage, "messageExpiryTimeLimit", Long.valueOf(0));
 		ReflectionTestUtils.setField(uinGeneratorStage, "clusterManagerUrl", "/dummyPath");
-
+		ReflectionTestUtils.setField(uinGeneratorStage, "updateInfo", "phone");
 		ClassLoader classLoader1 = getClass().getClassLoader();
 		File idJsonFile1 = new File(classLoader1.getResource("RegistrationProcessorIdentity.json").getFile());
 		InputStream idJsonStream1 = new FileInputStream(idJsonFile1);
@@ -247,8 +277,8 @@ public class UinGeneratorStageTest {
 		identityMappingjsonString = jsonObject.toJSONString();
 		documentObj = JsonUtil.getJSONObject(new ObjectMapper().readValue(identityMappingjsonString, JSONObject.class), MappingJsonConstants.DOCUMENT);
 		identityObj = JsonUtil.getJSONObject(new ObjectMapper().readValue(identityMappingjsonString, JSONObject.class), MappingJsonConstants.IDENTITY);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
 		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(),
@@ -279,7 +309,7 @@ public class UinGeneratorStageTest {
 		PowerMockito.mockStatic(Utilities.class);
 		PowerMockito.when(Utilities.class, "getJson", CONFIG_SERVER_URL, "RegistrationProcessorIdentity.json")
 				.thenReturn(identityMappingjsonString);
-		when(utility.getGetRegProcessorDemographicIdentity()).thenReturn("identity");
+		when(utilities.getGetRegProcessorDemographicIdentity()).thenReturn("identity");
 
 		when(identityJson.get(anyString())).thenReturn(demographicIdentity);
 		List<ApplicantDocument> applicantDocument = new ArrayList<>();
@@ -297,7 +327,7 @@ public class UinGeneratorStageTest {
 		demographicIdentity.put("UIN", Long.parseLong("9403107397"));
 
 		when(idRepoService.getUinByRid(anyString(), anyString())).thenReturn("9403107397");
-
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn(null);
 		List<BIR> birTypeList = new ArrayList<>();
 		BIR birType1 = new BIR.BIRBuilder().build();
 		BDBInfo bdbInfoType1 = new BDBInfo.BDBInfoBuilder().build();
@@ -340,7 +370,7 @@ public class UinGeneratorStageTest {
 		when(packetManagerService.getDocument(anyString(),anyString(),anyString(),any())).thenReturn(document);
 		when(packetManagerService.getBiometrics(anyString(),anyString(),any(),any())).thenReturn(biometricRecord);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
-		when(utility.getMappingJsonValue(anyString(), any())).thenReturn("UIN");
+		when(utilities.getMappingJsonValue(anyString(), any())).thenReturn("UIN");
 
 		ContainerInfoDto containerInfoDto = new ContainerInfoDto();
 		containerInfoDto.setSource("REGISTRATION_CLIENT");
@@ -367,8 +397,8 @@ public class UinGeneratorStageTest {
 		idResponseDTO.setVersion("1.0");
 
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertFalse(result.getInternalError());
@@ -384,8 +414,8 @@ public class UinGeneratorStageTest {
 		when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.IDREPO_DRAFT_EXCEPTION)).thenReturn("FAILED");
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(IdrepoDraftException.class);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
@@ -394,12 +424,12 @@ public class UinGeneratorStageTest {
 	
 	@Test
 	public void testUinGenerationIDRepoDraftAPiResourceException() throws Exception {
-		
+
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpServerErrorException httpServerErrorException = new HttpServerErrorException(
 				HttpStatus.INTERNAL_SERVER_ERROR, "KER-FSE-004:encrypted data is corrupted or not base64 encoded");
 		when(apisResourceAccessException.getCause()).thenReturn(httpServerErrorException);
-		
+
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -411,11 +441,11 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
-		
+
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("27847657360002520181210094052");
 		messageDTO.setReg_type(RegistrationType.UPDATE.name());
@@ -423,14 +453,14 @@ public class UinGeneratorStageTest {
 		when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
 		assertTrue(result.getIsValid());
 	}
-	
+
 	@Test
 	public void testUinReActivationifAlreadyActivatedSuccess() throws Exception {
 
@@ -458,7 +488,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -492,7 +522,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -532,6 +562,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -586,7 +617,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -643,7 +674,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -688,7 +719,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMaps);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -769,6 +800,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		
@@ -802,7 +834,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -857,7 +889,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -952,7 +984,8 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void deactivateTestSuccess() throws ApisResourceAccessException, IOException, JSONException, JsonProcessingException, PacketManagerException, IdrepoDraftException {
+	public void deactivateTestSuccess() throws ApisResourceAccessException, IOException, JSONException,
+			JsonProcessingException, PacketManagerException, IdrepoDraftException, IdrepoDraftReprocessableException {
 
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
@@ -965,6 +998,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 
 		
@@ -1014,7 +1048,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1039,7 +1073,8 @@ public class UinGeneratorStageTest {
 		assertFalse(result.getInternalError());
 	}
 	@Test
-	public void deactivateTestWithDeactivate() throws ApisResourceAccessException, IOException, JSONException, JsonProcessingException, PacketManagerException, IdrepoDraftException {
+	public void deactivateTestWithDeactivate() throws ApisResourceAccessException, IOException, JSONException,
+			JsonProcessingException, PacketManagerException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -1051,7 +1086,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1088,7 +1123,9 @@ public class UinGeneratorStageTest {
 	}
 			
 	@Test
-	public void deactivateTestWithNullResponseDTO() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+	public void deactivateTestWithNullResponseDTO()
+			throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException,
+			JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -1100,7 +1137,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1135,7 +1172,9 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void deactivateTestForExistingUinTestSuccess() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+	public void deactivateTestForExistingUinTestSuccess()
+			throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException,
+			JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("10031100110005020190313110030");
 		messageDTO.setReg_type(RegistrationType.valueOf("DEACTIVATED").name());
@@ -1169,7 +1208,8 @@ public class UinGeneratorStageTest {
 		defaultFields.add("UIN");
 
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
-		
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1185,7 +1225,8 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void deactivateTestFailure() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+	public void deactivateTestFailure() throws ApisResourceAccessException, PacketManagerException, IOException,
+			JsonProcessingException, JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
 
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
@@ -1198,7 +1239,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1245,7 +1286,8 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void apisResourceAccessExceptionTest() throws ApisResourceAccessException, IOException, IdrepoDraftException {
+	public void apisResourceAccessExceptionTest()
+			throws ApisResourceAccessException, IOException, IdrepoDraftException, IdrepoDraftReprocessableException {
 
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpServerErrorException httpServerErrorException = new HttpServerErrorException(
@@ -1259,8 +1301,8 @@ public class UinGeneratorStageTest {
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
@@ -1282,8 +1324,8 @@ public class UinGeneratorStageTest {
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
@@ -1303,8 +1345,8 @@ public class UinGeneratorStageTest {
 		String idJsonData = "{\"identity\":{\"IDSchemaVersion\":1.0,\"UIN\":\"4215839851\"}}";
 
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 		
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
@@ -1319,14 +1361,14 @@ public class UinGeneratorStageTest {
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("27847657360002520181210094052");
 		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
-		
+
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpClientErrorException httpClientErrorException = new HttpClientErrorException(
 				HttpStatus.INTERNAL_SERVER_ERROR, "KER-FSE-004:encrypted data is corrupted or not base64 encoded");
 		when(apisResourceAccessException.getCause()).thenReturn(httpClientErrorException);
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		messageDTO.setReg_type(RegistrationType.NEW.name());
 		Mockito.when(registrationStatusMapperUtil
@@ -1342,7 +1384,7 @@ public class UinGeneratorStageTest {
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("27847657360002520181210094052");
 		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
-		
+
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpServerErrorException httpServerErrorException = new HttpServerErrorException(
 				HttpStatus.INTERNAL_SERVER_ERROR, "KER-FSE-004:encrypted data is corrupted or not base64 encoded");
@@ -1352,8 +1394,8 @@ public class UinGeneratorStageTest {
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
 		messageDTO.setReg_type(RegistrationType.NEW.name());
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
@@ -1362,7 +1404,8 @@ public class UinGeneratorStageTest {
 
 
 	@Test
-	public void clientErrorExceptionTest() throws ApisResourceAccessException, IOException, IdrepoDraftException {
+	public void clientErrorExceptionTest()
+			throws ApisResourceAccessException, IOException, IdrepoDraftException, IdrepoDraftReprocessableException {
 
 		ApisResourceAccessException apisResourceAccessException = Mockito.mock(ApisResourceAccessException.class);
 		HttpClientErrorException httpErrorErrorException = new HttpClientErrorException(
@@ -1376,8 +1419,8 @@ public class UinGeneratorStageTest {
 		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenThrow(apisResourceAccessException);
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getInternalError());
@@ -1406,7 +1449,8 @@ public class UinGeneratorStageTest {
 
 	@Test
 	@Ignore
-	public void testApiResourceException() throws ApisResourceAccessException, IOException, IdrepoDraftException {
+	public void testApiResourceException()
+			throws ApisResourceAccessException, IOException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("10031100110005020190313110030");
 		messageDTO.setReg_type(RegistrationType.valueOf("DEACTIVATED").name());
@@ -1434,11 +1478,12 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void testApisResourceAccessExceptionPostApi() throws ApisResourceAccessException, IOException, IdrepoDraftException {
+	public void testApisResourceAccessExceptionPostApi()
+			throws ApisResourceAccessException, IOException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		ApisResourceAccessException exc = new ApisResourceAccessException();
 		MessageDTO messageDTO = new MessageDTO();
 		messageDTO.setRid("27847657360002520181210094052");
-		
+
 		when(registrationProcessorRestClientService.putApi(any(), any(), any(), any(), any(), any(), any()))
 				.thenThrow(exc);
 
@@ -1473,7 +1518,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1513,7 +1558,67 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void updateTestSuccess() throws ApisResourceAccessException, IOException, JsonProcessingException, PacketManagerException, JSONException, IdrepoDraftException {
+	public void testLinkSuccessForLostUinAndUpdateContactInfo() throws Exception {
+		ReflectionTestUtils.setField(uinGeneratorStage, "updateInfo", "phone,email,addressLine1");
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("UIN", "123456");
+		fieldMap.put("name", "mono");
+		fieldMap.put("email", "mono@mono.com");
+		fieldMap.put("addressLine1",
+				"[{\"language\":\"eng\",\"value\":\"abc\"},{\"language\":\"ara\",\"value\":\"abc\"}]");
+		List<String> defaultFields = new ArrayList<>();
+		defaultFields.add("name");
+		defaultFields.add("dob");
+		defaultFields.add("gender");
+		defaultFields.add("UIN");
+		when(idRepoService.getUinByRid(anyString(), anyString())).thenReturn("9403107397");
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
+		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.LOST.name());
+		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
+		String response = "{\"timestamp\":1553771083721,\"status\":404,\"errors\":[{\"errorCode\":\"KER-UIG-004\",\"errorMessage\":\"Given UIN is not in ISSUED status\"}]}";
+
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(registrationProcessorRestClientService.putApi(any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(response);
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		responseDTO.setStatus("ACTIVATED");
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO.setVersion("1.0");
+		when(packetManagerService.getField(any(), any(), any(), any())).thenReturn("989879234")
+				.thenReturn("mono@mono.com")
+				.thenReturn("[{\"language\":\"eng\",\"value\":\"abc\"},{\"language\":\"ara\",\"value\":\"abc\"}]");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(registrationProcessorRestClientService.postApi(any(), any(), any(), any(), any(Class.class)))
+				.thenReturn(idResponseDTO);
+		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(), any(), any(Class.class)))
+				.thenReturn(idResponseDTO);
+		when(
+				registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any(Class.class)))
+				.thenReturn(idResponseDTO);
+		when(packetManagerService.getFieldByMappingJsonKey(any(), any(), any(), any())).thenReturn("1.0");
+		when(regLostUinDetEntity.getLostUinMatchedRegIdByWorkflowId(any())).thenReturn("27847657360002520181210094052");
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertFalse(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void updateTestSuccess() throws ApisResourceAccessException, IOException, JsonProcessingException,
+			PacketManagerException, JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -1525,6 +1630,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
@@ -1551,8 +1657,8 @@ public class UinGeneratorStageTest {
 				.thenReturn(responsedto);
 		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
 				.thenReturn(idResponseDTO);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertTrue(result.getIsValid());
@@ -1647,6 +1753,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
@@ -1680,8 +1787,8 @@ public class UinGeneratorStageTest {
 		idResponseDTO1.setResponsetime("2019-01-17T06:29:01.940Z");
 		idResponseDTO1.setVersion("1.0");
 
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
 				.thenReturn(idResponseDTO1);
 
@@ -1704,6 +1811,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
@@ -1727,8 +1835,8 @@ public class UinGeneratorStageTest {
 
 		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
 				.thenReturn(idResponseDTO1);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertFalse(result.getInternalError());
@@ -1748,12 +1856,12 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
 		MessageDTO messageDTO = new MessageDTO();
@@ -1814,8 +1922,8 @@ public class UinGeneratorStageTest {
 		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
 		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(),
 				anyString(), any(Class.class))).thenReturn(str);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		MessageDTO result = uinGeneratorStage.process(messageDTO);
 		assertFalse(result.getInternalError());
@@ -1862,7 +1970,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1908,7 +2016,8 @@ public class UinGeneratorStageTest {
 	@Test
 	public void deactivateTestWithNullResponseDTOBeforeDeactivate() throws ApisResourceAccessException,
 			PacketManagerException,
-			IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+			IOException, JsonProcessingException, JSONException, IdrepoDraftException,
+			IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -1920,7 +2029,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -1957,7 +2066,8 @@ public class UinGeneratorStageTest {
 	@Test
 	public void deactivateTesApiResourceClientException() throws ApisResourceAccessException,
 			PacketManagerException,
-			IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+			IOException, JsonProcessingException, JSONException, IdrepoDraftException,
+			IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -1969,7 +2079,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -2007,7 +2117,8 @@ public class UinGeneratorStageTest {
 	@Test
 	public void deactivateTesApiResourceServerException() throws ApisResourceAccessException,
 			PacketManagerException,
-			IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+			IOException, JsonProcessingException, JSONException, IdrepoDraftException,
+			IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -2019,7 +2130,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -2055,7 +2166,8 @@ public class UinGeneratorStageTest {
 	@Test
 	public void deactivateTesApiResourceException() throws ApisResourceAccessException,
 			PacketManagerException,
-			IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+			IOException, JsonProcessingException, JSONException, IdrepoDraftException,
+			IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -2067,7 +2179,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -2103,7 +2215,8 @@ public class UinGeneratorStageTest {
 	@Test
 	public void deactivateTestAlreadyDeactivated() throws ApisResourceAccessException,
 			PacketManagerException,
-			IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+			IOException, JsonProcessingException, JSONException, IdrepoDraftException,
+			IdrepoDraftReprocessableException {
 		Map<String, String> fieldMap = new HashMap<>();
 		fieldMap.put("UIN", "123456");
 		fieldMap.put("name", "mono");
@@ -2115,7 +2228,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -2152,7 +2265,8 @@ public class UinGeneratorStageTest {
 	}
 
 	@Test
-	public void testUinAlreadyDeactivated() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException, JSONException, IdrepoDraftException {
+	public void testUinAlreadyDeactivated() throws ApisResourceAccessException, PacketManagerException, IOException,
+			JsonProcessingException, JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
 		Map<String, String> fieldsMap = new HashMap<>();
 		fieldsMap.put("UIN", "123456");
 		fieldsMap.put("name", "mono");
@@ -2194,6 +2308,7 @@ public class UinGeneratorStageTest {
 				.thenReturn(idResponseDTO);
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.PACKET_UIN_GENERATION_REPROCESS)).thenReturn("REPROCESS");
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldsMap);
 		
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
@@ -2219,7 +2334,7 @@ public class UinGeneratorStageTest {
 		defaultFields.add("gender");
 		defaultFields.add("UIN");
 
-		
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
 		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
 		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
 		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
@@ -2240,8 +2355,8 @@ public class UinGeneratorStageTest {
 		idResponseDTO.setVersion("1.0");
 		when(registrationProcessorRestClientService.postApi(any(), any(), any(), any(), any()))
 				.thenReturn(idResponseDTO);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
-		when(utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
 
 		String Str = "{\"uin\":\"6517036426\"}";
 
@@ -2322,5 +2437,419 @@ public class UinGeneratorStageTest {
 		assertTrue(result.getInternalError());
 		assertTrue(result.getIsValid());
 	}
-	
+
+	@Test
+	public void testUinGenerationIDRepoDraftReprocessableException() throws Exception {
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+
+		when(registrationStatusMapperUtil
+				.getStatusCode(RegistrationExceptionTypeCode.IDREPO_DRAFT_REPROCESSABLE_EXCEPTION))
+				.thenReturn("REPROCESS");
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any()))
+				.thenThrow(IdrepoDraftReprocessableException.class);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void testUinGenerationSuccessWithEmptyName() throws Exception {
+		ReflectionTestUtils.setField(uinGeneratorStage,"trimWhitespaces",true);
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("firstName","[ {\n" +
+				"  \"language\" : \"eng\",\n" +
+				"  \"value\" : \" \"\n" +
+				"} ]");
+		fieldMap.put("email", "mono@mono.com");
+		fieldMap.put("phone", "23456");
+		fieldMap.put("dob", "11/11/2011");
+		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
+		ArgumentCaptor<io.mosip.registration.processor.packet.manager.dto.IdRequestDto> argumentCaptor = ArgumentCaptor.forClass(IdRequestDto.class);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		responseDTO.setStatus("ACTIVATED");
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO.setVersion("1.0");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		verify(idrepoDraftService).idrepoUpdateDraft(any(), any(), argumentCaptor.capture());
+		ObjectMapper objectMapper = new ObjectMapper();
+		String jsonobject=objectMapper.writeValueAsString(argumentCaptor.getAllValues().get(0).getRequest().getIdentity());
+		JsonNode jsonNode=objectMapper.readTree(jsonobject);
+
+		assertEquals("",jsonNode.get("firstName").asText());
+		assertFalse(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void testUinGenerationSuccessWithSelectedHanhle() throws Exception {
+		ReflectionTestUtils.setField(uinGeneratorStage,"trimWhitespaces",true);
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("selectedHandles","[\n" +
+				"        \"nrcId\",\n" +
+				"        \"email\",\n" +
+				"        \"phoneNumber\"\n" +
+				"      ]");
+		fieldMap.put("email", "mono@mono.com");
+		fieldMap.put("phoneNumber", "23456");
+		fieldMap.put("dob", "11/11/2011");
+		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
+		ArgumentCaptor<io.mosip.registration.processor.packet.manager.dto.IdRequestDto> argumentCaptor = ArgumentCaptor.forClass(IdRequestDto.class);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		responseDTO.setStatus("ACTIVATED");
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO.setVersion("1.0");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		verify(idrepoDraftService).idrepoUpdateDraft(any(), any(), argumentCaptor.capture());
+		ObjectMapper objectMapper = new ObjectMapper();
+		String jsonobject=objectMapper.writeValueAsString(argumentCaptor.getAllValues().get(0).getRequest().getIdentity());
+		JsonNode jsonNode=objectMapper.readTree(jsonobject);
+
+		assertEquals("nrcId",jsonNode.get("selectedHandles").get(0).asText());
+		assertEquals("email",jsonNode.get("selectedHandles").get(1).asText());
+		assertEquals("phoneNumber",jsonNode.get("selectedHandles").get(2).asText());
+		assertFalse(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void testUinGenerationSuccessWithObjectDataType () throws Exception {
+		ReflectionTestUtils.setField(uinGeneratorStage,"trimWhitespaces",true);
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("individualBiometrics","{\n" +
+				"        \"format\": \"cbeff\",\n" +
+				"        \"value\": \"individualBiometrics_bio_CBEFF\",\n" +
+				"        \"version\": 1\n" +
+				"      }");
+		fieldMap.put("email", "mono@mono.com");
+		fieldMap.put("phoneNumber", "23456");
+		fieldMap.put("dob", "11/11/2011");
+		when(packetManagerService.getFields(any(),any(),any(),any())).thenReturn(fieldMap);
+		ArgumentCaptor<io.mosip.registration.processor.packet.manager.dto.IdRequestDto> argumentCaptor = ArgumentCaptor.forClass(IdRequestDto.class);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		responseDTO.setStatus("ACTIVATED");
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO.setVersion("1.0");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		verify(idrepoDraftService).idrepoUpdateDraft(any(), any(), argumentCaptor.capture());
+		ObjectMapper objectMapper = new ObjectMapper();
+		String jsonobject=objectMapper.writeValueAsString(argumentCaptor.getAllValues().get(0).getRequest().getIdentity());
+		JsonNode jsonNode=objectMapper.readTree(jsonobject);
+
+		assertEquals("cbeff",jsonNode.get("individualBiometrics").get("format").asText());
+		assertFalse(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void updateTestWithAdditionalProcess() throws ApisResourceAccessException, IOException, JsonProcessingException,
+			PacketManagerException, JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
+		Map<String ,String> externalInternalMap = new HashMap<>();
+		externalInternalMap.put("CRVS_UPDATE", "UPDATE");
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		messageDTO.setReg_type("CRVS_UPDATE");
+		ReflectionTestUtils.setField(uinGeneratorStage, "additionalProcessCategoryMapping", externalInternalMap);
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("UIN", "123456");
+		fieldMap.put("name", "mono");
+		fieldMap.put("email", "mono@mono.com");
+
+		List<String> defaultFields = new ArrayList<>();
+		defaultFields.add("name");
+		defaultFields.add("dob");
+		defaultFields.add("gender");
+		defaultFields.add("UIN");
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
+
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
+		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+		IdResponseDTO responsedto = new IdResponseDTO();
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		responseDTO.setStatus("ACTIVATED");
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-03-12T06:49:30.779Z");
+		idResponseDTO.setVersion("1.0");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(), any(), any()))
+				.thenReturn(responsedto);
+		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
+				.thenReturn(idResponseDTO);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getIsValid());
+		assertFalse(result.getInternalError());
+	}
+
+	@Test
+	public void PacketManagerNonRecoverableExceptionTest() throws ApisResourceAccessException, IOException, JsonProcessingException,
+			PacketManagerException {
+		when(registrationStatusMapperUtil.getStatusCode(any())).thenReturn("FAILED");
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenThrow(new PacketManagerNonRecoverableException("errorCode","message"));
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		messageDTO.setReg_type("CRVS_UPDATE");
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertFalse(result.getIsValid());
+		assertTrue(result.getInternalError());
+	}
+
+	@Test
+	public void testProcessUinGenerationReprocessShouldSetReprocessStatus() throws IOException, PacketManagerException, ApisResourceAccessException, JsonProcessingException,
+			IdrepoDraftReprocessableException, IdrepoDraftException {
+		List<ErrorDTO> errors = new ArrayList<>();
+		ErrorDTO errorDTO = new ErrorDTO();
+		errorDTO.setErrorCode("IDR-IDC-004");
+		errorDTO.setMessage("Unknown error occurred");
+		errors.add(errorDTO);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		idResponseDTO.setErrors(errors);
+
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		Mockito.when(registrationStatusMapperUtil
+				.getStatusCode(RegistrationExceptionTypeCode.PACKET_UIN_GENERATION_REPROCESS)).thenReturn(RegistrationTransactionStatusCode.REPROCESS.toString());
+
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(new HashMap<>());
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getInternalError());
+		assertTrue(result.getIsValid());
+	}
+
+	@Test
+	public void testProcessUinGenerationFailedShouldSetFailedStatus() throws IOException, PacketManagerException, ApisResourceAccessException, JsonProcessingException,
+			IdrepoDraftReprocessableException, IdrepoDraftException {
+
+		List<ErrorDTO> errors = new ArrayList<>();
+		ErrorDTO errorDTO = new ErrorDTO();
+		errorDTO.setErrorCode("IDR-IDC-005");
+		errors.add(errorDTO);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		idResponseDTO.setErrors(errors);
+
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+		Mockito.when(registrationStatusMapperUtil
+				.getStatusCode(RegistrationExceptionTypeCode.PACKET_UIN_GENERATION_FAILED)).thenReturn(RegistrationTransactionStatusCode.FAILED.toString());
+
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(new HashMap<>());
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(), anyString(), any(), any())).thenReturn("0.1");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getInternalError());
+		assertFalse(result.getIsValid());
+	}
+
+	@Test
+	public void testLostAndUpdateUinWhenIdRepoDraftReturnsNullShouldSetValidStatusFalse() throws Exception {
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("UIN", "123456");
+		fieldMap.put("name", "mono");
+		fieldMap.put("email", "mono@mono.com");
+
+		List<String> defaultFields = new ArrayList<>();
+		defaultFields.add("name");
+		defaultFields.add("dob");
+		defaultFields.add("gender");
+		defaultFields.add("UIN");
+		when(idRepoService.getUinByRid(anyString(), anyString())).thenReturn("9403107397");
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
+		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.LOST.name());
+		String str = "{\"id\":\"mosip.id.read\",\"version\":\"1.0\",\"responsetime\":\"2019-04-05\",\"metadata\":null,\"response\":{\"uin\":\"2812936908\"},\"errors\":[{\"errorCode\":null,\"errorMessage\":null}]}";
+		String response = "{\"timestamp\":1553771083721,\"status\":404,\"errors\":[{\"errorCode\":\"KER-UIG-004\",\"errorMessage\":\"Given UIN is not in ISSUED status\"}]}";
+
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(registrationProcessorRestClientService.putApi(any(), any(), any(), any(), any(), any(), any()))
+				.thenReturn(response);
+
+		when(packetManagerService.getField(any(), any(), any(),any())).thenReturn("989879234");
+
+		when(packetManagerService.getFieldByMappingJsonKey(any(), any(), any(), any())).thenReturn("1.0");
+		when(regLostUinDetEntity.getLostUinMatchedRegIdByWorkflowId(any())).thenReturn("27847657360002520181210094052");
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertFalse(result.getInternalError());
+		assertFalse(result.getIsValid());
+	}
+
+	@Test
+	public void testReactivateUinWhenStatusActivated() throws Exception {
+
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("UIN", "123456");
+		fieldMap.put("name", "mono");
+		fieldMap.put("email", "mono@mono.com");
+
+		List<String> defaultFields = new ArrayList<>();
+		defaultFields.add("name");
+		defaultFields.add("dob");
+		defaultFields.add("gender");
+		defaultFields.add("UIN");
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("27847657360002520181210094052");
+		messageDTO.setReg_type(RegistrationType.valueOf("ACTIVATED").name());
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		responseDTO.setStatus(io.mosip.registration.processor.status.code.RegistrationType.ACTIVATED.toString());
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO.setVersion("1.0");
+
+		IdResponseDTO idResponseDTO1 = new IdResponseDTO();
+		ResponseDTO responseDTO1 = new ResponseDTO();
+		idResponseDTO1.setErrors(null);
+		idResponseDTO1.setId("mosip.id.update");
+		responseDTO1.setStatus("DEACTIVATED");
+		idResponseDTO1.setResponse(responseDTO1);
+		idResponseDTO1.setResponsetime("2019-01-17T06:29:01.940Z");
+		idResponseDTO1.setVersion("1.0");
+
+		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(), any(), any()))
+				.thenReturn(idResponseDTO1);
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
+				.thenReturn(idResponseDTO1);
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getIsValid());
+		assertFalse(result.getInternalError());
+	}
+
+	@Test
+	public void testUinUpdateWhenIdRepoStatusDraftedShouldReturnTrue() throws ApisResourceAccessException, IOException, JsonProcessingException,
+			PacketManagerException, JSONException, IdrepoDraftException, IdrepoDraftReprocessableException {
+		Map<String, String> fieldMap = new HashMap<>();
+		fieldMap.put("UIN", "123456");
+		fieldMap.put("name", "mono");
+		fieldMap.put("email", "mono@mono.com");
+
+		List<String> defaultFields = new ArrayList<>();
+		defaultFields.add("name");
+		defaultFields.add("dob");
+		defaultFields.add("gender");
+		defaultFields.add("UIN");
+
+		when(utility.getUIn(any(),any(),any(ProviderStageName.class))).thenReturn("123456");
+		when(packetManagerService.getFields(any(), any(), any(), any())).thenReturn(fieldMap);
+
+		when(packetManagerService.getFieldByMappingJsonKey(anyString(),anyString(),any(),any())).thenReturn("0.1");
+		when(packetManagerService.getFields(anyString(),anyList(),anyString(),any())).thenReturn(fieldMap);
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+
+		when(idSchemaUtil.getDefaultFields(anyDouble())).thenReturn(defaultFields);
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		messageDTO.setReg_type(RegistrationType.valueOf("UPDATE").name());
+		IdResponseDTO responsedto = new IdResponseDTO();
+
+		IdResponseDTO idResponseDTO = new IdResponseDTO();
+		ResponseDTO responseDTO = new ResponseDTO();
+		idResponseDTO.setErrors(null);
+		idResponseDTO.setId("mosip.id.update");
+		responseDTO.setStatus(IDREPO_STATUS);
+		idResponseDTO.setResponse(responseDTO);
+		idResponseDTO.setResponsetime("2019-03-12T06:49:30.779Z");
+		idResponseDTO.setVersion("1.0");
+
+		when(idrepoDraftService.idrepoUpdateDraft(anyString(), any(), any())).thenReturn(idResponseDTO);
+		when(registrationProcessorRestClientService.getApi(any(), any(), anyString(), any(), any()))
+				.thenReturn(responsedto);
+		when(registrationProcessorRestClientService.patchApi(any(), any(), any(), any(), any(), any()))
+				.thenReturn(idResponseDTO);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY)).thenReturn(identityObj);
+		when(utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT)).thenReturn(documentObj);
+
+		MessageDTO result = uinGeneratorStage.process(messageDTO);
+		assertTrue(result.getIsValid());
+		assertFalse(result.getInternalError());
+	}
 }

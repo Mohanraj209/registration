@@ -13,6 +13,8 @@ import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.core.code.AbisStatusCode;
 import io.mosip.registration.processor.core.constant.ProviderStageName;
 import io.mosip.registration.processor.core.exception.PacketManagerException;
+import io.mosip.registration.processor.status.code.RegistrationStatusCode;
+import io.mosip.registration.processor.status.entity.RegistrationStatusEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.CollectionUtils;
@@ -49,6 +51,9 @@ public class ABISHandlerUtil {
 	/** The utilities. */
 	@Autowired
 	Utilities utilities;
+
+	@Autowired
+	Utility utility;
 
 	/** The packet info manager. */
 	@Autowired
@@ -99,12 +104,26 @@ public class ABISHandlerUtil {
 				if (!CollectionUtils.isEmpty(machedRefIds)) {
 					List<String> matchedRegIds = packetInfoDao.getAbisRefRegIdsByMatchedRefIds(machedRefIds);
 					if (!CollectionUtils.isEmpty(matchedRegIds)) {
-						List<String> processingRegIds = packetInfoDao.getWithoutStatusCodes(matchedRegIds,
-								RegistrationTransactionStatusCode.REJECTED.toString(), RegistrationTransactionStatusCode.PROCESSED.toString());
-						List<String> processedRegIds = packetInfoDao.getProcessedOrProcessingRegIds(matchedRegIds,
-								RegistrationTransactionStatusCode.PROCESSED.toString());
-						uniqueRIDs = getUniqueRegIds(processedRegIds, registrationId, registrationType, stageName);
+						List<RegistrationStatusEntity> matchedRegistrationStatusEntities = packetInfoDao
+								.getWithoutStatusCode(matchedRegIds,
+										RegistrationStatusCode.REJECTED.toString());
+						List<RegistrationStatusEntity> processingRegistrationStatusEntities = matchedRegistrationStatusEntities
+								.stream()
+								.filter(e -> RegistrationStatusCode.PROCESSING.toString().equals(e.getStatusCode()))
+								.collect(Collectors.toList());
+						List<String> processingRegIds = processingRegistrationStatusEntities.stream()
+								.map(RegistrationStatusEntity::getRegId)
+								.collect(Collectors.toList());
+						List<String> matchedProcessedRegIds = matchedRegistrationStatusEntities.stream()
+								.map(RegistrationStatusEntity::getRegId).collect(Collectors.toList());
 						uniqueRIDs.addAll(processingRegIds);
+						Set<String> processedRegIds = getUniqueRegIds(matchedProcessedRegIds, registrationId,
+								registrationType,
+								stageName);
+						for(String rid:processedRegIds) {
+							if(!uniqueRIDs.contains(rid))
+								uniqueRIDs.add(rid);
+						}
 					}
 				}
 			}
@@ -201,7 +220,7 @@ public class ABISHandlerUtil {
 					utilities.getGetRegProcessorDemographicIdentity());
 
 			if (registrationType.equalsIgnoreCase(SyncTypeDto.UPDATE.toString())) {
-				String packetUin = utilities.getUIn(registrationId, registrationType, stageName);
+				String packetUin = utility.getUIn(registrationId, registrationType, stageName);
 				if (matchedUin != null && !packetUin.equals(matchedUin)) {
 					filteredRegMap.put(matchedUin, machedRegId);
 				}

@@ -19,6 +19,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import io.mosip.kernel.core.exception.NullPointerException;
 import io.mosip.registration.processor.core.abstractverticle.EventDTO;
+import io.mosip.registration.processor.core.abstractverticle.HealthCheckDTO;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.abstractverticle.MosipEventBus;
@@ -85,6 +86,9 @@ public class WorkflowActionApiTest {
 	@Mock
 	WorkflowSearchApi workflowSearchApi;
 
+	@Mock
+	WorkflowInstanceApi workflowInstanceApi;
+
 	@InjectMocks
 	WorkflowActionApi workflowActionApi = new WorkflowActionApi() {
 
@@ -122,6 +126,18 @@ public class WorkflowActionApiTest {
 
 				@Override
 				public void send(MessageBusAddress toAddress, MessageDTO message) {
+
+				}
+
+				@Override
+				public void consumerHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
+
+				}
+
+				@Override
+				public void senderHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
 
 				}
 			};
@@ -374,13 +390,13 @@ public class WorkflowActionApiTest {
 			}
 
 			@Override
-			public RoutingContext addCookie(io.vertx.core.http.Cookie arg0) {
-				return null;
+			public void fail(int statusCode, Throwable throwable) {
+
 			}
 
 			@Override
-			public int addEndHandler(Handler<AsyncResult<Void>> arg0) {
-				return 0;
+			public RoutingContext addCookie(io.vertx.core.http.Cookie cookie) {
+				return null;
 			}
 
 			@Override
@@ -389,17 +405,17 @@ public class WorkflowActionApiTest {
 			}
 
 			@Override
-			public void fail(int arg0, Throwable arg1) {
-
-			}
-
-			@Override
 			public boolean isSessionAccessed() {
 				return false;
 			}
 
 			@Override
-			public boolean removeEndHandler(int arg0) {
+			public int addEndHandler(Handler<AsyncResult<Void>> handler) {
+				return 0;
+			}
+
+			@Override
+			public boolean removeEndHandler(int handlerID) {
 				return false;
 			}
 

@@ -4,10 +4,10 @@ import java.io.Serializable;
 import java.time.LocalDateTime;
 import java.util.Objects;
 
-import javax.persistence.Column;
-import javax.persistence.Embedded;
-import javax.persistence.Entity;
-import javax.persistence.Table;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.Entity;
+import jakarta.persistence.Table;
 
 /**
  * The Class RegistrationStatusEntity.
@@ -66,6 +66,18 @@ public class RegistrationStatusEntity extends BaseRegistrationEntity<BaseRegistr
 	@Column(name = "cr_dtimes", updatable = false)
 
 	private LocalDateTime createDateTime;
+
+	public LocalDateTime getPacketCreatedDateTime() {
+		return packetCreatedDateTime;
+	}
+
+	public void setPacketCreatedDateTime(LocalDateTime packetCreatedDateTime) {
+		this.packetCreatedDateTime = packetCreatedDateTime;
+	}
+
+	/** packet created date and time */
+	@Column(name = "pkt_cr_dtimes")
+	private LocalDateTime packetCreatedDateTime;
 
 	/** The updated by. */
 	@Column(name = "upd_by")

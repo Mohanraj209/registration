@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 
+import io.mosip.registration.processor.core.eventbus.MosipEventBusFactory;
 import org.apache.camel.CamelContext;
 import org.apache.camel.component.kafka.KafkaComponent;
 import org.apache.camel.component.kafka.KafkaConfiguration;
@@ -61,6 +62,9 @@ public class MosipBridgeFactory extends MosipVerticleAPIManager {
 	Environment environment;
 	@Value("${vertx.cluster.configuration}")
 	private String clusterManagerUrl;
+
+	@Autowired
+	private MosipEventBusFactory mosipEventBusFactory;
 
 	/** The mosip event bus. */
 	MosipEventBus mosipEventBus = null;
@@ -142,10 +146,11 @@ public class MosipBridgeFactory extends MosipVerticleAPIManager {
 		for (String camelRouteFileName : camelRoutesFilesArr) {
 			String camelRoutesUrl = camelRoutesBaseUrl + camelRouteFileName;
 			responseEntity = restTemplate.exchange(camelRoutesUrl, HttpMethod.GET, null, Resource.class);
-			if (responseEntity.getBody() == null) {
+			Resource body=responseEntity.getBody();
+			if (body == null) {
 				throw new RuntimeException("Response for " + camelRoutesUrl + " is null");
 			}
-			routes = camelContext.loadRoutesDefinition(responseEntity.getBody().getInputStream());
+			routes = camelContext.loadRoutesDefinition(body.getInputStream());
 			camelContext.addRouteDefinitions(routeIntercepter.intercept(camelContext, routes.getRoutes()));
 			// camelContext.addRouteDefinitions(routes.getRoutes());
 		}
@@ -159,6 +164,8 @@ public class MosipBridgeFactory extends MosipVerticleAPIManager {
 			KafkaConfiguration kafkaConfiguration = new KafkaConfiguration();
 			kafkaConfiguration.setGroupId(kafkaGroupId);
 			kafkaConfiguration.setBrokers(kafkaBootstrapServers);
+			kafkaConfiguration.setMaxPollRecords(Integer.valueOf(this.mosipEventBusFactory.getMaxPollRecords(STAGE_PROPERTY_PREFIX)));
+			kafkaConfiguration.setMaxPollIntervalMs(Long.valueOf(this.mosipEventBusFactory.getMaxPollInterval(STAGE_PROPERTY_PREFIX)));
 			kafkaComponent.setConfiguration(kafkaConfiguration);
 			camelContext.addComponent("eventbus", kafkaComponent);
 			camelContext.addComponent("workflow-cmd", kafkaComponent);

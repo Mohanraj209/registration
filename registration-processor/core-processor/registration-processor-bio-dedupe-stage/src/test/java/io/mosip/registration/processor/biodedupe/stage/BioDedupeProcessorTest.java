@@ -23,8 +23,10 @@ import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.biodedupe.service.CbeffValidateAndVerificatonService;
 import io.mosip.registration.processor.biodedupe.stage.exception.CbeffNotFoundException;
 import io.mosip.registration.processor.core.constant.ProviderStageName;
+import io.mosip.registration.processor.core.constant.RegistrationType;
 import io.mosip.registration.processor.core.exception.PacketManagerException;
 import io.mosip.registration.processor.packet.storage.utils.PriorityBasedPacketManagerService;
+import io.mosip.registration.processor.status.code.RegistrationStatusCode;
 import org.apache.commons.io.IOUtils;
 import org.json.simple.JSONObject;
 import org.junit.Before;
@@ -51,6 +53,7 @@ import io.mosip.registration.processor.core.code.EventId;
 import io.mosip.registration.processor.core.code.EventName;
 import io.mosip.registration.processor.core.code.EventType;
 import io.mosip.registration.processor.core.code.RegistrationExceptionTypeCode;
+import io.mosip.registration.processor.core.code.RegistrationTransactionStatusCode;
 import io.mosip.registration.processor.core.constant.AbisConstant;
 import io.mosip.registration.processor.core.constant.MappingJsonConstants;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
@@ -69,6 +72,7 @@ import io.mosip.registration.processor.packet.storage.dao.PacketInfoDao;
 import io.mosip.registration.processor.packet.storage.dto.ApplicantInfoDto;
 import io.mosip.registration.processor.packet.storage.utils.ABISHandlerUtil;
 import io.mosip.registration.processor.packet.storage.utils.Utilities;
+import io.mosip.registration.processor.packet.storage.utils.Utility;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.rest.client.audit.dto.AuditResponseDto;
 import io.mosip.registration.processor.status.dao.RegistrationStatusDao;
@@ -147,7 +151,10 @@ public class BioDedupeProcessorTest {
 
 	/** The utilities. */
 	@Mock
-	Utilities utility;
+	Utilities utilities;
+
+	@Mock
+	Utility utility;
 
 	/** The rest client service. */
 	@Mock
@@ -185,7 +192,7 @@ public class BioDedupeProcessorTest {
 		Mockito.doNothing().when(cbeffValidateAndVerificatonService).validateBiometrics(any(), any());
 		Mockito.when(priorityBasedPacketManagerService.getFieldByMappingJsonKey(any(),any(),any(),any())).thenReturn("field");
 		Mockito.when(priorityBasedPacketManagerService.getField(any(),any(),any(),any())).thenReturn("field");
-		when(utility.getDefaultSource(any(), any())).thenReturn("reg-client");
+		when(utilities.getDefaultSource(any(), any())).thenReturn("reg-client");
 		ReflectionTestUtils.setField(bioDedupeProcessor, "infantDedupe", "Y");
 		ReflectionTestUtils.setField(bioDedupeProcessor, "ageLimit", "4");
 
@@ -217,7 +224,7 @@ public class BioDedupeProcessorTest {
 		File mappingJsonFile = new File(classLoader.getResource("RegistrationProcessorIdentity.json").getFile());
 		InputStream is = new FileInputStream(mappingJsonFile);
 		String value = IOUtils.toString(is);
-		Mockito.when(utility.getRegistrationProcessorMappingJson(anyString())).thenReturn(JsonUtil
+		Mockito.when(utilities.getRegistrationProcessorMappingJson(anyString())).thenReturn(JsonUtil
 				.getJSONObject(JsonUtil.objectMapperReadValue(value, JSONObject.class), MappingJsonConstants.IDENTITY));
 		Mockito.when(bioDedupeService.getFileByRegId(any(),any())).thenReturn("test".getBytes());
 
@@ -249,7 +256,7 @@ public class BioDedupeProcessorTest {
 		Mockito.when(bioDedupeService.getFileByRegId(anyString(),anyString())).thenReturn(null);
 		ReflectionTestUtils.setField(bioDedupeProcessor, "infantDedupe", "N");
 		Mockito.when(restClientService.getApi(any(), any(), anyString(), any(), any())).thenReturn(null);
-		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenReturn(2);
+		Mockito.when(utility.getApplicantAge(any(), any(), any())).thenReturn(2);
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
 
 		assertTrue(messageDto.getIsValid());
@@ -268,7 +275,7 @@ public class BioDedupeProcessorTest {
 		Mockito.doThrow(new CbeffNotFoundException("Exception")).when(cbeffValidateAndVerificatonService).validateBiometrics(any(), any());
 		Mockito.when(bioDedupeService.getFileByRegId(anyString(),anyString())).thenReturn(null);
 		Mockito.when(restClientService.getApi(any(), any(), anyString(), any(), any())).thenReturn(null);
-		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenReturn(12);
+		Mockito.when(utility.getApplicantAge(any(), any(), any())).thenReturn(12);
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.CBEFF_NOT_PRESENT_EXCEPTION)).thenReturn("FAILED");
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
@@ -288,7 +295,7 @@ public class BioDedupeProcessorTest {
 
 		ReflectionTestUtils.setField(bioDedupeProcessor, "ageLimit", "age");
 		Mockito.when(restClientService.getApi(any(), any(), anyString(), any(), any())).thenReturn(null);
-		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenReturn(12);
+		Mockito.when(utility.getApplicantAge(any(), any(), any())).thenReturn(12);
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
 		assertTrue(messageDto.getInternalError());
 		assertFalse(messageDto.getIsValid());
@@ -305,7 +312,7 @@ public class BioDedupeProcessorTest {
 		Mockito.doThrow(new IOException("Exception")).when(cbeffValidateAndVerificatonService).validateBiometrics(any(), any());
 		Mockito.when(bioDedupeService.getFileByRegId(anyString(),anyString())).thenReturn(null);
 		Mockito.when(restClientService.getApi(any(), any(), anyString(), any(), any())).thenReturn(null);
-		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenThrow(new IOException("IOException"));
+		Mockito.when(utility.getApplicantAge(any(), any(), any())).thenThrow(new IOException("IOException"));
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.IOEXCEPTION)).thenReturn("ERROR");
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
@@ -375,7 +382,7 @@ public class BioDedupeProcessorTest {
 	public void testUpdateInsertionToHandler() throws Exception {
 
 		PowerMockito.mockStatic(Utilities.class);
-		Mockito.when(utility.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
+		Mockito.when(utilities.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
 
 
 		registrationStatusDto.setRegistrationId("reg1234");
@@ -397,7 +404,7 @@ public class BioDedupeProcessorTest {
 	public void testUpdateInsertionToUIN() throws Exception {
 
 		PowerMockito.mockStatic(Utilities.class);
-		Mockito.when(utility.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
+		Mockito.when(utilities.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
 		Mockito.when(priorityBasedPacketManagerService.getField(any(),any(),any(),any())).thenReturn(null);
 		Mockito.when(priorityBasedPacketManagerService.getFieldByMappingJsonKey(any(),any(),any(),any())).thenReturn(null);
 
@@ -546,7 +553,7 @@ public class BioDedupeProcessorTest {
 		JSONObject j1 = new JSONObject(map);
 
 		Mockito.when(idRepoService.getIdJsonFromIDRepo(any(), any())).thenReturn(j1);
-		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenReturn(12);
+		Mockito.when(utility.getApplicantAge(any(), any(), any())).thenReturn(12);
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
 
 		assertFalse(messageDto.getIsValid());
@@ -607,7 +614,7 @@ public class BioDedupeProcessorTest {
 		map.put("value", "Male");
 		obj2.put("gender", map);
 
-		Mockito.when(utility.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
+		Mockito.when(utilities.getGetRegProcessorDemographicIdentity()).thenReturn(IDENTITY);
 		Mockito.when(idRepoService.getIdJsonFromIDRepo("27847657360002520190320095010", IDENTITY)).thenReturn(obj1);
 		Mockito.when(idRepoService.getIdJsonFromIDRepo("27847657360002520190320095011", IDENTITY)).thenReturn(obj2);
 		Mockito.when(priorityBasedPacketManagerService.getField("reg1234","dob","LOST", ProviderStageName.BIO_DEDUPE)).thenReturn("2016/01/01");
@@ -677,12 +684,40 @@ public class BioDedupeProcessorTest {
 		ApisResourceAccessException e=new ApisResourceAccessException();
 	
 		
-		Mockito.doThrow(e).when(utility).getApplicantAge(any(),any(),any());
+		Mockito.doThrow(e).when(utility).getApplicantAge(any(), any(), any());
 		Mockito.when(registrationStatusMapperUtil
 				.getStatusCode(RegistrationExceptionTypeCode.APIS_RESOURCE_ACCESS_EXCEPTION)).thenReturn("REPROCESS");
 		MessageDTO messageDto = bioDedupeProcessor.process(dto, stageName);
 
 		assertTrue(messageDto.getIsValid());
 		assertTrue(messageDto.getInternalError());
+	}
+
+	@Test
+	public void testProcessWhenExceptionOccursShouldSetValidStatusFalseAndInternalErrorTrue() {
+
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setRid("10031100110005020190313110030");
+		when(abisHandlerUtil.getPacketStatus(any()))
+				.thenThrow(new RuntimeException("test exception"));
+		MessageDTO result = bioDedupeProcessor.process(messageDTO, stageName);
+
+		assertFalse(result.getIsValid());
+		assertTrue(result.getInternalError());
+	}
+
+	@Test
+	public void testNewPacketPreAbisIdentificationWhenInfantDedupeDisabledSuccessStatus() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException {
+
+		ReflectionTestUtils.setField(bioDedupeProcessor, "infantDedupe", "N");
+		MessageDTO messageDTO = new MessageDTO();
+		messageDTO.setReg_type(RegistrationType.NEW.name());
+		Mockito.when(bioDedupeService.getFileByRegId(anyString(),anyString())).thenReturn(null);
+		Mockito.when(utility.getApplicantAge(any(),any(),any())).thenReturn(3);
+		MessageDTO messageDto = bioDedupeProcessor.process(messageDTO, stageName);
+		assertTrue(messageDto.getIsValid());
+		assertEquals(MessageBusAddress.BIO_DEDUPE_BUS_IN, messageDTO.getMessageBusAddress());
+		assertEquals(RegistrationStatusCode.PROCESSING.name(), registrationStatusDto.getStatusCode());
+		assertEquals(RegistrationTransactionStatusCode.SUCCESS.name(), registrationStatusDto.getLatestTransactionStatusCode());
 	}
 }

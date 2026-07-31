@@ -2,57 +2,44 @@ package io.mosip.registration.processor.rest.client.utils;
 
 import java.io.IOException;
 import java.net.URI;
-import java.security.KeyManagementException;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.X509Certificate;
-import java.util.Arrays;
 import java.util.Iterator;
+import java.util.List;
 
-import javax.annotation.PostConstruct;
-import javax.net.ssl.SSLContext;
-
-import io.mosip.registration.processor.core.tracing.ContextualData;
-import io.mosip.registration.processor.core.tracing.TracingConstant;
+import io.mosip.kernel.core.util.DateUtils2;
 import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.apache.http.Header;
+import org.apache.hc.core5.http.Header;
+import org.apache.hc.core5.http.ParseException;
 import org.apache.http.HttpResponse;
-import org.apache.http.client.HttpClient;
-import org.apache.http.client.methods.HttpPost;
-import org.apache.http.conn.ssl.SSLConnectionSocketFactory;
-import org.apache.http.entity.StringEntity;
-import org.apache.http.impl.client.CloseableHttpClient;
-import org.apache.http.impl.client.HttpClientBuilder;
-import org.apache.http.impl.client.HttpClients;
-import org.apache.http.ssl.TrustStrategy;
-import org.apache.http.util.EntityUtils;
+import org.apache.hc.client5.http.classic.methods.HttpPost;
+import org.apache.hc.client5.http.impl.classic.*;
+import org.apache.hc.core5.http.io.entity.EntityUtils;
+import org.apache.hc.core5.http.io.entity.StringEntity;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
 
-import com.google.gson.Gson;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.mosip.kernel.core.logger.spi.Logger;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.kernel.core.util.StringUtils;
 import io.mosip.kernel.core.util.TokenHandlerUtil;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
 import io.mosip.registration.processor.core.logger.RegProcessorLogger;
+import io.mosip.registration.processor.core.tracing.ContextualData;
+import io.mosip.registration.processor.core.tracing.TracingConstant;
 import io.mosip.registration.processor.rest.client.audit.dto.Metadata;
 import io.mosip.registration.processor.rest.client.audit.dto.SecretKeyRequest;
 import io.mosip.registration.processor.rest.client.audit.dto.TokenRequestDTO;
@@ -69,12 +56,6 @@ public class RestApiClient {
 	/** The logger. */
 	private final Logger logger = RegProcessorLogger.getLogger(RestApiClient.class);
 
-	@Value("${registration.processor.httpclient.connections.max.per.host:20}")
-	private int maxConnectionPerRoute;
-
-	@Value("${registration.processor.httpclient.connections.max:100}")
-	private int totalMaxConnection;
-
 	/** The builder. */
 	@Autowired
 	RestTemplateBuilder builder;
@@ -88,6 +69,9 @@ public class RestApiClient {
 	@Qualifier("selfTokenRestTemplate")
 	RestTemplate localRestTemplate;
 
+	@Autowired
+	ObjectMapper objMp;
+
 	/**
 	 * Gets the api. *
 	 * 
@@ -100,6 +84,7 @@ public class RestApiClient {
 	@SuppressWarnings("unchecked")
 	public <T> T getApi(URI uri, Class<?> responseType) throws Exception {
 		T result = null;
+
 		try {
 			result = (T) localRestTemplate.exchange(uri, HttpMethod.GET, setRequestHeader(null, null), responseType)
 					.getBody();
@@ -205,7 +190,7 @@ public class RestApiClient {
 
 	public int headApi(URI uri) throws Exception {
 		try {
-			HttpStatus httpStatus = localRestTemplate
+			HttpStatusCode httpStatus = localRestTemplate
 					.exchange(uri, HttpMethod.HEAD, setRequestHeader(null, null), Object.class).getStatusCode();
 			return httpStatus.value();
 		} catch (Exception e) {
@@ -231,7 +216,7 @@ public class RestApiClient {
 	@SuppressWarnings("unchecked")
 	private HttpEntity<Object> setRequestHeader(Object requestType, MediaType mediaType) throws IOException {
 		MultiValueMap<String, String> headers = new LinkedMultiValueMap<String, String>();
-		//headers.add("Cookie", getToken());
+		// headers.add("Cookie", getToken());
 		headers.add(TracingConstant.TRACE_HEADER, (String) ContextualData.getOrDefault(TracingConstant.TRACE_ID_KEY));
 		if (mediaType != null) {
 			headers.add("Content-Type", mediaType.toString());
@@ -243,8 +228,11 @@ public class RestApiClient {
 				Iterator<String> iterator = httpHeader.keySet().iterator();
 				while (iterator.hasNext()) {
 					String key = iterator.next();
-					if (!(headers.containsKey("Content-Type") && key == "Content-Type"))
-						headers.add(key, httpHeader.get(key).get(0));
+					List<String> collection = httpHeader.get(key);
+					if ((collection != null && !collection.isEmpty())
+							&& !(headers.containsKey("Content-Type") && key.equalsIgnoreCase("Content-Type")))
+						headers.add(key, collection.get(0));
+
 				}
 				return new HttpEntity<Object>(httpEntity.getBody(), headers);
 			} catch (ClassCastException e) {
@@ -259,8 +247,9 @@ public class RestApiClient {
 	 *
 	 * @return
 	 * @throws IOException
+	 * @throws ParseException
 	 */
-	public String getToken() throws IOException {
+	public String getToken() throws IOException, ParseException {
 		String token = System.getProperty("token");
 		boolean isValid = false;
 
@@ -275,22 +264,21 @@ public class RestApiClient {
 			tokenRequestDTO.setId(environment.getProperty("token.request.id"));
 			tokenRequestDTO.setMetadata(new Metadata());
 
-			tokenRequestDTO.setRequesttime(DateUtils.getUTCCurrentDateTimeString());
+			tokenRequestDTO.setRequesttime(DateUtils2.getUTCCurrentDateTimeString());
 			// tokenRequestDTO.setRequest(setPasswordRequestDTO());
 			tokenRequestDTO.setRequest(setSecretKeyRequestDTO());
 			tokenRequestDTO.setVersion(environment.getProperty("token.request.version"));
 
-			Gson gson = new Gson();
-			HttpClient httpClient = HttpClientBuilder.create().build();
+			CloseableHttpClient httpClient = HttpClientBuilder.create().build();
 			HttpPost post = new HttpPost(environment.getProperty("KEYBASEDTOKENAPI"));
 			try {
-				StringEntity postingString = new StringEntity(gson.toJson(tokenRequestDTO));
+				StringEntity postingString = new StringEntity(objMp.writeValueAsString(tokenRequestDTO));
 				post.setEntity(postingString);
 				post.setHeader("Content-type", "application/json");
 				post.setHeader(TracingConstant.TRACE_HEADER,
 						(String) ContextualData.getOrDefault(TracingConstant.TRACE_ID_KEY));
-				HttpResponse response = httpClient.execute(post);
-				org.apache.http.HttpEntity entity = response.getEntity();
+				CloseableHttpResponse response = httpClient.execute(post);
+				org.apache.hc.core5.http.HttpEntity entity = response.getEntity();
 				String responseBody = EntityUtils.toString(entity, "UTF-8");
 				Header[] cookie = response.getHeaders("Set-Cookie");
 				if (cookie.length == 0)
@@ -299,6 +287,10 @@ public class RestApiClient {
 				System.setProperty("token", token.substring(14, token.indexOf(';')));
 				return token.substring(0, token.indexOf(';'));
 			} catch (IOException e) {
+				logger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.APPLICATIONID.toString(),
+						LoggerFileConstant.APPLICATIONID.toString(), e.getMessage() + ExceptionUtils.getStackTrace(e));
+				throw e;
+			} catch (ParseException e) {
 				logger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.APPLICATIONID.toString(),
 						LoggerFileConstant.APPLICATIONID.toString(), e.getMessage() + ExceptionUtils.getStackTrace(e));
 				throw e;
@@ -325,5 +317,22 @@ public class RestApiClient {
 			}
 		}
 	}
+
+
+	public <T> T deleteApi(URI uri, Class<?> responseType) throws Exception {
+		T result = null;
+
+		try {
+			result = (T) localRestTemplate.exchange(uri, HttpMethod.DELETE, setRequestHeader(null, null), responseType)
+					.getBody();
+		} catch (Exception e) {
+			logger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.APPLICATIONID.toString(),
+					LoggerFileConstant.APPLICATIONID.toString(), e.getMessage() + ExceptionUtils.getStackTrace(e));
+			tokenExceptionHandler(e);
+			throw e;
+		}
+		return result;
+	}
+
 
 }

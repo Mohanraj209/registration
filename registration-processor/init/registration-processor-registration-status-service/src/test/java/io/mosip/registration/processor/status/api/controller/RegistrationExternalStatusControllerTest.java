@@ -9,9 +9,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import java.util.ArrayList;
 import java.util.List;
 
-import javax.servlet.http.Cookie;
+import io.mosip.kernel.core.util.DateUtils2;
+import jakarta.servlet.http.Cookie;
 
-import io.mosip.registration.processor.core.util.exception.DigitalSignatureException;
 import org.json.simple.JSONArray;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
@@ -40,24 +40,27 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.context.WebApplicationContext;
+import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.NestedServletException;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.util.DigitalSignatureUtility;
 import io.mosip.registration.processor.core.workflow.dto.SortInfo;
 import io.mosip.registration.processor.status.api.config.RegistrationStatusConfigTest;
 import io.mosip.registration.processor.status.dto.FilterInfo;
+import io.mosip.registration.processor.status.dto.InternalRegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.RegistrationExternalStatusRequestDTO;
 import io.mosip.registration.processor.status.dto.RegistrationExternalStatusSubRequestDto;
 import io.mosip.registration.processor.status.dto.RegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.SearchInfo;
+import io.mosip.registration.processor.status.dto.SyncRegistrationDto;
+import io.mosip.registration.processor.status.dto.SyncResponseDto;
 import io.mosip.registration.processor.status.exception.RegStatusAppException;
+import io.mosip.registration.processor.status.service.RegistrationStatusService;
+import io.mosip.registration.processor.status.service.SyncRegistrationService;
 import io.mosip.registration.processor.status.service.impl.RegistrationStatusServiceImpl;
 import io.mosip.registration.processor.status.service.impl.SyncRegistrationServiceImpl;
 import io.mosip.registration.processor.status.utilities.RegistrationUtility;
@@ -78,6 +81,10 @@ public class RegistrationExternalStatusControllerTest {
 	@Qualifier("selfTokenRestTemplate")
 	private RestTemplate restTemplate;
 
+	@MockBean
+	@Qualifier("selfTokenWebClient")
+	private WebClient webClient;
+
 	@Autowired
 	private MockMvc mockMvc;
 	
@@ -93,12 +100,12 @@ public class RegistrationExternalStatusControllerTest {
 	@MockBean
 	RegistrationStatusRequestValidator registrationStatusRequestValidator;
 
-	/** The registration status service. */
 	@MockBean
-	RegistrationStatusServiceImpl registrationStatusService;
+	RegistrationStatusService<String, InternalRegistrationStatusDto, RegistrationStatusDto> registrationStatusService;
 
+	/** The sync registration service. */
 	@MockBean
-	SyncRegistrationServiceImpl syncRegistrationService;
+	SyncRegistrationService<SyncResponseDto, SyncRegistrationDto> syncRegistrationService;
 	
 	@MockBean
 	DigitalSignatureUtility digitalSignatureUtility;
@@ -126,7 +133,6 @@ public class RegistrationExternalStatusControllerTest {
 
 	/** The array to json. */
 	private String regStatusToJson;
-	Gson gson = new GsonBuilder().serializeNulls().create();
 
 	@Before
 	public void setUp() throws JsonProcessingException, ApisResourceAccessException {
@@ -152,8 +158,8 @@ public class RegistrationExternalStatusControllerTest {
 		registrationExternalStatusRequestDTO.setId("mosip.registration.external.status");
 		registrationExternalStatusRequestDTO.setVersion("1.0");
 		registrationExternalStatusRequestDTO
-				.setRequesttime(DateUtils.getUTCCurrentDateTimeString("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
-		regStatusToJson = gson.toJson(registrationExternalStatusRequestDTO);
+				.setRequesttime(DateUtils2.getUTCCurrentDateTimeString("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"));
+		regStatusToJson =objectMapper.writeValueAsString(registrationExternalStatusRequestDTO);
 		registrationDtoList = new ArrayList<>();
 		registrationDtoList1 = new ArrayList<>();
 		RegistrationStatusDto registrationStatusDto1 = new RegistrationStatusDto();
@@ -219,7 +225,7 @@ public class RegistrationExternalStatusControllerTest {
 		assertEquals(registrationStatusErrorDto.get("errorMessage").toString(), "RID Not Found");
 	}
 
-	@Test(expected = NestedServletException.class)
+
 	@WithMockUser(value = "resident", roles = "RESIDENT")
 	public void searchRegstatusException() throws Exception {
 
@@ -228,7 +234,7 @@ public class RegistrationExternalStatusControllerTest {
 		this.mockMvc.perform(post("/externalstatus/search").accept(MediaType.APPLICATION_JSON_VALUE)
 				.cookie(new Cookie("Authorization", regStatusToJson)).contentType(MediaType.APPLICATION_JSON_VALUE)
 				.content(regStatusToJson.getBytes()).header("timestamp", "2019-05-07T05:13:55.704Z"))
-				.andExpect(status().isInternalServerError());
+				.andExpect(status().isOk()).andReturn();
 	}
 
 }

@@ -1,5 +1,8 @@
 package io.mosip.registration.processor.workflowmanager.config;
 
+import io.mosip.registration.processor.workflowmanager.service.WorkflowInstanceService;
+import io.mosip.registration.processor.workflowmanager.validator.WorkflowInstanceRequestValidator;
+import io.mosip.registration.processor.workflowmanager.verticle.*;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.PropertySource;
@@ -11,16 +14,13 @@ import io.mosip.registration.processor.core.spi.restclient.RegistrationProcessor
 import io.mosip.registration.processor.core.workflow.dto.WorkflowCompletedEventDTO;
 import io.mosip.registration.processor.core.workflow.dto.WorkflowPausedForAdditionalInfoEventDTO;
 import io.mosip.registration.processor.packet.storage.utils.PacketManagerService;
+import io.mosip.registration.processor.packet.storage.utils.PriorityBasedPacketManagerService;
 import io.mosip.registration.processor.rest.client.service.impl.RegistrationProcessorRestClientServiceImpl;
 import io.mosip.registration.processor.workflowmanager.service.WorkflowActionService;
 import io.mosip.registration.processor.workflowmanager.service.WorkflowSearchService;
 import io.mosip.registration.processor.workflowmanager.util.WebSubUtil;
 import io.mosip.registration.processor.workflowmanager.validator.WorkflowActionRequestValidator;
 import io.mosip.registration.processor.workflowmanager.validator.WorkflowSearchRequestValidator;
-import io.mosip.registration.processor.workflowmanager.verticle.WorkflowActionApi;
-import io.mosip.registration.processor.workflowmanager.verticle.WorkflowActionJob;
-import io.mosip.registration.processor.workflowmanager.verticle.WorkflowInternalActionVerticle;
-import io.mosip.registration.processor.workflowmanager.verticle.WorkflowSearchApi;
 
 @PropertySource("classpath:bootstrap.properties")
 @Configuration
@@ -40,6 +40,10 @@ public class WorkflowManagerConfigBeans {
 		return new WorkflowSearchApi();
 	}
 
+    @Bean
+    public WorkflowInstanceApi getWorkFlowInstanceApi() {
+        return new WorkflowInstanceApi();
+    }
 	@Bean
 	public WorkflowActionRequestValidator getWorkflowActionRequestValidator() {
 		return new WorkflowActionRequestValidator();
@@ -49,12 +53,22 @@ public class WorkflowManagerConfigBeans {
 	public WorkflowSearchRequestValidator getWorkflowSearchRequestValidator() {
 		return new WorkflowSearchRequestValidator();
 	}
+    @Bean
+    public WorkflowInstanceRequestValidator getWorkflowInstanceRequestValidator() {
+        return new WorkflowInstanceRequestValidator();
+    }
+
 
 	@Bean
 	public WorkflowActionService getWorkflowActionService() {
 		return new WorkflowActionService();
 	}
 
+
+    @Bean
+    public WorkflowInstanceService getWorkFlowInstanceService() {
+        return new WorkflowInstanceService();
+    }
 	@Bean
 	public WorkflowSearchService getWorkflowSearchService() {
 		return new WorkflowSearchService();

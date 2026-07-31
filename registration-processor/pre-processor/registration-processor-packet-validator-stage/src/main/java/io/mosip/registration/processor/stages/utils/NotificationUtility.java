@@ -13,6 +13,7 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
 
+import io.mosip.kernel.core.util.DateUtils2;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.json.JSONArray;
@@ -29,7 +30,6 @@ import org.springframework.web.util.UriComponentsBuilder;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.mosip.kernel.core.logger.spi.Logger;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.core.code.ApiName;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
@@ -95,6 +95,10 @@ public class NotificationUtility {
 
 	@Value("${mosip.default.user-preferred-language-attribute:#{null}}")
 	private String userPreferredLanguageAttribute;
+
+	@Value("#{${registration.processor.notification.additional-process.category-mapping:{:}}}")
+	private Map<String,String> additionalProcessCategoryForNotification;
+
 	/** The env. */
 	@Autowired
 	private Environment env;
@@ -132,6 +136,8 @@ public class NotificationUtility {
 	private static final String UIN_UPDATE=NOTIFICATION_TEMPLATE_CODE+"uin.update.";
 	private static final String RES_UPDATE=NOTIFICATION_TEMPLATE_CODE+"resident.update.";
 	private static final String TECHNICAL_ISSUE=NOTIFICATION_TEMPLATE_CODE+"technical.issue.";
+	private static final String SUP_REJECT=NOTIFICATION_TEMPLATE_CODE+"supervisor.reject.";
+
 
 
 	@Autowired
@@ -139,7 +145,7 @@ public class NotificationUtility {
 
 	public void sendNotification(RegistrationAdditionalInfoDTO registrationAdditionalInfoDTO,
 			InternalRegistrationStatusDto registrationStatusDto, SyncRegistrationEntity regEntity,
-			String[] allNotificationTypes, boolean isProcessingSuccess)
+			String[] allNotificationTypes, boolean isProcessingSuccess,boolean isValidSupervisorStatus)
 			throws ApisResourceAccessException, IOException, PacketManagerException, JsonProcessingException, JSONException {
 		registrationId = regEntity.getRegistrationId();
 		LogDescription description = new LogDescription();
@@ -153,15 +159,22 @@ public class NotificationUtility {
         String nameField = JsonUtil.getJSONValue(
                 JsonUtil.getJSONObject(regProcessorIdentityJson, MappingJsonConstants.NAME),
                 MappingJsonConstants.VALUE);
+		String[] nameArray = nameField.toString().split(",");
 		for(String preferredLanguage:preferredLanguages) {
 		if (registrationAdditionalInfoDTO.getName() != null) {
-			attributes.put(nameField , registrationAdditionalInfoDTO.getName());
+			attributes.put(nameArray[0] + "_" + preferredLanguage, registrationAdditionalInfoDTO.getName());
 		} else {
-			attributes.put(nameField, "");
+			attributes.put(nameArray[0] + "_" + preferredLanguage, "");
 		}
-		
+		if (nameArray.length > 1) {
+			for (int i = 1; i < nameArray.length; i++) {
+				attributes.put(nameArray[i] + "_" + preferredLanguage, "");
+			}
+		}
 		if (isProcessingSuccess) {
 			type = setNotificationTemplateType(registrationStatusDto, type);
+		} else if (!isValidSupervisorStatus) {
+			type = NotificationTemplateType.SUP_REJECT;
 		} else {
 			type = NotificationTemplateType.TECHNICAL_ISSUE;
 		}
@@ -287,7 +300,7 @@ public class NotificationUtility {
 			requestWrapper.setVersion(env.getProperty(REG_PROC_APPLICATION_VERSION));
 			DateTimeFormatter format = DateTimeFormatter.ofPattern(env.getProperty(DATETIME_PATTERN));
 			LocalDateTime localdatetime = LocalDateTime
-					.parse(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
+					.parse(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
 			requestWrapper.setRequesttime(localdatetime);
 			requestWrapper.setRequest(smsDto);
 			regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.USERID.toString(),
@@ -385,10 +398,10 @@ public class NotificationUtility {
 		String apiHost = env.getProperty(ApiName.EMAILNOTIFIER.name());
 		UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(apiHost);
 
-		builder.queryParam("mailTo", mailTo);
+		params.add("mailTo", mailTo);
 
-		builder.queryParam("mailSubject", subjectArtifact);
-		builder.queryParam("mailContent", artifact);
+		params.add("mailSubject", subjectArtifact);
+		params.add("mailContent", artifact);
 
 		params.add("attachments", null);
 
@@ -407,12 +420,15 @@ public class NotificationUtility {
 	}
 
 	private NotificationTemplateType setNotificationTemplateType(InternalRegistrationStatusDto registrationStatusDto,
-			NotificationTemplateType type) {
+			NotificationTemplateType type)  {
+		String internalProcess = utility.getInternalProcess(additionalProcessCategoryForNotification, registrationStatusDto.getRegistrationType());
 		if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.LOST.getValue()))
 			type = NotificationTemplateType.LOST_UIN;
-		else if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.NEW.getValue()))
+		else if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.NEW.getValue()) ||
+				internalProcess.equalsIgnoreCase(SyncTypeDto.NEW.getValue()))
 			type = NotificationTemplateType.NEW_REG;
-		else if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.UPDATE.getValue()))
+		else if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.UPDATE.getValue())||
+				internalProcess.equalsIgnoreCase(SyncTypeDto.UPDATE.getValue()))
 			type = NotificationTemplateType.UIN_UPDATE;
 		else if (registrationStatusDto.getRegistrationType().equalsIgnoreCase(SyncTypeDto.RES_REPRINT.getValue()))
 			type = NotificationTemplateType.REPRINT_UIN;
@@ -467,6 +483,11 @@ public class NotificationUtility {
 			MessageSenderDTO.setSmsTemplateCode(env.getProperty(TECHNICAL_ISSUE+SMS));
 			MessageSenderDTO.setEmailTemplateCode(env.getProperty(TECHNICAL_ISSUE+EMAIL));
 			MessageSenderDTO.setSubjectTemplateCode(env.getProperty(TECHNICAL_ISSUE+SUB));
+			break;
+		case SUP_REJECT:
+			MessageSenderDTO.setSmsTemplateCode(env.getProperty(SUP_REJECT+SMS));
+			MessageSenderDTO.setEmailTemplateCode(env.getProperty(SUP_REJECT+EMAIL));
+			MessageSenderDTO.setSubjectTemplateCode(env.getProperty(SUP_REJECT+SUB));
 			break;
 		default:
 			break;

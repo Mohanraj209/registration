@@ -61,7 +61,7 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 	/**
 	 * The reg proc logger.
 	 */
-	private static Logger regProcLogger = RegProcessorLogger.getLogger(SecurezoneNotificationStage.class);
+	private static final Logger regProcLogger = RegProcessorLogger.getLogger(SecurezoneNotificationStage.class);
 
 	/**
 	 * The cluster url.
@@ -132,7 +132,7 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 
 	@Override
 	public void start() {
-		router.setRoute(this.postUrl(vertx, MessageBusAddress.SECUREZONE_NOTIFICATION_IN,
+		router.setRoute(this.postUrl(getVertx(), MessageBusAddress.SECUREZONE_NOTIFICATION_IN,
 				MessageBusAddress.SECUREZONE_NOTIFICATION_OUT));
 		this.routes(router);
 		this.createServer(router.getRouter(), getPort());
@@ -157,15 +157,9 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 		regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(), "",
 				"SecurezoneNotificationStage::processURL()::entry");
 
-		InternalRegistrationStatusDto registrationStatusDto = new InternalRegistrationStatusDto();
 		MessageDTO messageDTO = new MessageDTO();
-		TrimExceptionMessage trimMessage = new TrimExceptionMessage();
-		LogDescription description = new LogDescription();
-		boolean isTransactionSuccessful = false;
-
 		try {
 			JsonObject obj = ctx.getBodyAsJson();
-
 			messageDTO.setMessageBusAddress(MessageBusAddress.SECUREZONE_NOTIFICATION_IN);
 			messageDTO.setInternalError(Boolean.FALSE);
 			messageDTO.setRid(obj.getString("rid"));
@@ -174,7 +168,56 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 			messageDTO.setSource(obj.getString("source"));
 			messageDTO.setIteration(obj.getInteger("iteration"));
 			messageDTO.setWorkflowInstanceId(obj.getString("workflowInstanceId"));
+			MessageDTO result = process(messageDTO);
+			if (result.getIsValid()) {
+				sendMessage(result);
+				this.setResponse(ctx,
+						"Packet with registrationId '" + result.getRid() + "' has been forwarded to next stage");
 
+				regProcLogger.info(obj.getString("rid"),
+						"Packet with registrationId '" + result.getRid() + "' has been forwarded to next stage",
+						null, null);
+			} else {
+				this.setResponse(ctx, "Packet with registrationId '" + obj.getString("rid")
+						+ "' has not been uploaded to file System");
+
+				regProcLogger.info(obj.getString("rid"),
+						"Packet with registrationId '" + result.getRid() + "' has not been uploaded to file System",
+						null, null);
+			}
+		} catch (Exception e) {
+			ctx.fail(e);
+		}
+	}
+
+	/**
+	 * This is for failure handler
+	 *
+	 * @param routingContext
+	 */
+	private void failure(RoutingContext routingContext) {
+		this.setResponse(routingContext, routingContext.failure().getMessage());
+	}
+
+	/**
+	 * sends messageDTO to camel bridge.
+	 *
+	 * @param messageDTO the message DTO
+	 */
+	public void sendMessage(MessageDTO messageDTO) {
+		if (routingEnabled)
+			this.send(this.mosipEventBus, MessageBusAddress.SECUREZONE_NOTIFICATION_OUT, messageDTO);
+	}
+
+	@Override
+	public MessageDTO process(MessageDTO messageDTO) {
+		InternalRegistrationStatusDto registrationStatusDto = new InternalRegistrationStatusDto();
+		TrimExceptionMessage trimMessage = new TrimExceptionMessage();
+		LogDescription description = new LogDescription();
+		messageDTO.setInternalError(Boolean.FALSE);
+		messageDTO.setIsValid(Boolean.FALSE);
+		boolean isTransactionSuccessful = false;
+		try {
 			registrationStatusDto = registrationStatusService.getRegistrationStatus(messageDTO.getRid(),
 					messageDTO.getReg_type(), messageDTO.getIteration(), messageDTO.getWorkflowInstanceId());
 
@@ -227,23 +270,6 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 						LoggerFileConstant.REGISTRATIONID.toString(), messageDTO.getRid(),
 						"Transaction failed. RID not found in registration table.");
 			}
-
-			if (messageDTO.getIsValid()) {
-				sendMessage(messageDTO);
-				this.setResponse(ctx,
-						"Packet with registrationId '" + messageDTO.getRid() + "' has been forwarded to next stage");
-
-				regProcLogger.info(obj.getString("rid"),
-						"Packet with registrationId '" + messageDTO.getRid() + "' has been forwarded to next stage",
-						null, null);
-			} else {
-				this.setResponse(ctx, "Packet with registrationId '" + obj.getString("rid")
-						+ "' has not been uploaded to file System");
-
-				regProcLogger.info(obj.getString("rid"),
-						"Packet with registrationId '" + messageDTO.getRid() + "' has not been uploaded to file System",
-						null, null);
-			}
 		} catch (TablenotAccessibleException e) {
 			registrationStatusDto.setStatusCode(RegistrationStatusCode.PROCESSING.toString());
 			registrationStatusDto.setStatusComment(
@@ -257,18 +283,17 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 					description.getCode() + " -- " + messageDTO.getRid(),
 					PlatformErrorMessages.RPR_RGS_REGISTRATION_TABLE_NOT_ACCESSIBLE.getMessage() + e.getMessage()
 							+ ExceptionUtils.getStackTrace(e));
+			messageDTO.setIsValid(Boolean.TRUE);
 			messageDTO.setInternalError(Boolean.TRUE);
 			messageDTO.setRid(registrationStatusDto.getRegistrationId());
-			ctx.fail(e);
 		} catch (Exception e) {
 			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.APPLICATIONID.toString(),
-					ctx.getBodyAsString(), ExceptionUtils.getStackTrace(e));
+					messageDTO.toString(), ExceptionUtils.getStackTrace(e));
 			messageDTO.setIsValid(Boolean.FALSE);
 			description.setCode(PlatformErrorMessages.RPR_SECUREZONE_FAILURE.getCode());
 			description.setMessage(PlatformErrorMessages.RPR_SECUREZONE_FAILURE.getMessage());
-			ctx.fail(e);
 		} finally {
-			if (messageDTO.getInternalError()) {
+			if (messageDTO.getInternalError() != null && messageDTO.getInternalError()) {
 				registrationStatusDto.setUpdatedBy(USER);
 				int retryCount = registrationStatusDto.getRetryCount() != null
 						? registrationStatusDto.getRetryCount() + 1
@@ -291,30 +316,7 @@ public class SecurezoneNotificationStage extends MosipVerticleAPIManager {
 			auditLogRequestBuilder.createAuditRequestBuilder(description.getMessage(), eventId, eventName, eventType,
 					moduleId, moduleName, messageDTO.getRid());
 		}
-	}
-
-	/**
-	 * This is for failure handler
-	 *
-	 * @param routingContext
-	 */
-	private void failure(RoutingContext routingContext) {
-		this.setResponse(routingContext, routingContext.failure().getMessage());
-	}
-
-	/**
-	 * sends messageDTO to camel bridge.
-	 *
-	 * @param messageDTO the message DTO
-	 */
-	public void sendMessage(MessageDTO messageDTO) {
-		if (routingEnabled)
-			this.send(this.mosipEventBus, MessageBusAddress.SECUREZONE_NOTIFICATION_OUT, messageDTO);
-	}
-
-	@Override
-	public MessageDTO process(MessageDTO object) {
-		return null;
+		return messageDTO;
 	}
 
 	private boolean isDuplicatePacketForSameReqId(MessageDTO messageDTO) {

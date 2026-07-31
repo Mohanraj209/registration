@@ -1,7 +1,6 @@
 package io.mosip.registration.processor.status.dao;
 
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Iterator;
@@ -14,7 +13,6 @@ import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Component;
 
-import io.mosip.registration.processor.core.code.RegistrationTransactionStatusCode;
 import io.mosip.registration.processor.core.workflow.dto.FilterInfo;
 import io.mosip.registration.processor.core.workflow.dto.PaginationInfo;
 import io.mosip.registration.processor.core.workflow.dto.SortInfo;
@@ -118,7 +116,7 @@ public class RegistrationStatusDao {
 
 		return registrationStatusRepositary.findByRegId(rid);
 	}
-
+	
 	/**
 	 * Gets the enrolment status by status code.
 	 *
@@ -190,7 +188,7 @@ public class RegistrationStatusDao {
 	 * @return the un processed packets
 	 */
 	public List<RegistrationStatusEntity> getUnProcessedPackets(Integer fetchSize, long elapseTime,
-			Integer reprocessCount, List<String> status) {
+			Integer reprocessCount, List<String> status, List<String> excludeStageNames) {
 
 		LocalDateTime timeDifference = LocalDateTime.now().minusSeconds(elapseTime);
 		List<String> statusCodes=new ArrayList<>();
@@ -201,15 +199,17 @@ public class RegistrationStatusDao {
 		statusCodes.add(RegistrationStatusCode.FAILED.toString());
 		statusCodes.add(RegistrationStatusCode.PROCESSED.toString());
 
-		return registrationStatusRepositary.getUnProcessedPackets(status, reprocessCount, timeDifference, statusCodes,fetchSize);
+		return registrationStatusRepositary.getUnProcessedPackets(status, reprocessCount, timeDifference, 
+			statusCodes, fetchSize, excludeStageNames);
 	}
 
-	public Integer getUnProcessedPacketsCount(long elapseTime, Integer reprocessCount, List<String> status) {
+	public Integer getUnProcessedPacketsCount(long elapseTime, Integer reprocessCount, List<String> status, 
+			List<String> excludeStageNames) {
 		LocalDateTime timeDifference = LocalDateTime.now().minusSeconds(elapseTime);
 		List<String> statusCodes=new ArrayList<>();
 		statusCodes.add(RegistrationStatusCode.PAUSED.toString());
-		return registrationStatusRepositary.getUnProcessedPacketsCount(status, reprocessCount, timeDifference, statusCodes);
-
+		return registrationStatusRepositary.getUnProcessedPacketsCount(status, reprocessCount, timeDifference, 
+			statusCodes, excludeStageNames);
 	}
 
 	public Boolean checkUinAvailabilityForRid(String rid) {
@@ -241,5 +241,10 @@ public class RegistrationStatusDao {
 	public List<RegistrationStatusEntity> getResumablePackets(Integer fetchSize) {
 
 		return registrationStatusRepositary.getResumablePackets(RegistrationStatusCode.RESUMABLE.toString(), fetchSize);
+	}
+
+	public List<RegistrationStatusEntity> findByIdAndProcessAndIteration(String id, String process, int iteration)
+	{
+		return registrationStatusRepositary.getByIdAndProcessAndIteration(id, process, iteration);
 	}
 }

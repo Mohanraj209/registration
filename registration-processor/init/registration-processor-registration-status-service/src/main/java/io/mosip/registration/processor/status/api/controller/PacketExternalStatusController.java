@@ -1,10 +1,13 @@
 package io.mosip.registration.processor.status.api.controller;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+
+import io.mosip.kernel.core.util.DateUtils2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
@@ -18,10 +21,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
 import io.mosip.registration.processor.core.util.DigitalSignatureUtility;
 import io.mosip.registration.processor.status.code.RegistrationExternalStatusCode;
@@ -40,6 +41,8 @@ import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
+import io.mosip.registration.processor.core.logger.RegProcessorLogger;
+import io.mosip.kernel.core.logger.spi.Logger;
 
 
 /**
@@ -66,6 +69,9 @@ public class PacketExternalStatusController {
 	/** The digital signature utility. */
 	@Autowired
 	private DigitalSignatureUtility digitalSignatureUtility;
+	
+	@Autowired
+	ObjectMapper objectMapper;
 
 	/** The is enabled. */
 	@Value("${registration.processor.signature.isEnabled}")
@@ -81,6 +87,7 @@ public class PacketExternalStatusController {
 
 	private static final String PACKET_EXTERNAL_STATUS_APPLICATION_VERSION = "mosip.registration.processor.packet.external.status.version";
 
+	private final Logger logger = RegProcessorLogger.getLogger(this.getClass());
 	/**
 	 * Packet external status.
 	 *
@@ -115,19 +122,19 @@ public class PacketExternalStatusController {
 			}
 			List<PacketExternalStatusDTO> packetExternalStatusDTOList = packetExternalStatusService
 					.getByPacketIds(packetIdList);
-
+			PacketExternalStatusResponseDTO packetExternalStatusResponseDTO = buildPacketStatusResponse(
+					packetExternalStatusDTOList, packetExternalStatusRequestDTO.getRequest());
+			String res = objectMapper.writeValueAsString(packetExternalStatusResponseDTO);
 			if (isEnabled) {
-				PacketExternalStatusResponseDTO packetExternalStatusResponseDTO = buildPacketStatusResponse(
-						packetExternalStatusDTOList, packetExternalStatusRequestDTO.getRequest());
-				Gson gson = new GsonBuilder().serializeNulls().create();
 				HttpHeaders headers = new HttpHeaders();
 				headers.add(RESPONSE_SIGNATURE,
-						digitalSignatureUtility.getDigitalSignature(gson.toJson(packetExternalStatusResponseDTO)));
+						digitalSignatureUtility.getDigitalSignature(res));
 				return ResponseEntity.status(HttpStatus.OK).headers(headers)
-						.body(gson.toJson(packetExternalStatusResponseDTO));
+						.body(res);
 			}
+			
 			return ResponseEntity.status(HttpStatus.OK)
-					.body(buildPacketStatusResponse(packetExternalStatusDTOList, packetExternalStatusRequestDTO.getRequest()));
+					.body(res);
 		} catch (RegStatusAppException e) {
 			throw new RegStatusAppException(PlatformErrorMessages.RPR_RGS_DATA_VALIDATION_FAILED, e);
 		} catch (Exception e) {
@@ -149,7 +156,7 @@ public class PacketExternalStatusController {
 		if (Objects.isNull(response.getId())) {
 			response.setId(env.getProperty(PACKET_EXTERNAL_STATUS_SERVICE_ID));
 		}
-		response.setResponsetime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		response.setResponsetime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		response.setVersion(env.getProperty(PACKET_EXTERNAL_STATUS_APPLICATION_VERSION));
 		response.setResponse(packetStatus);
 		List<PacketExternalStatusSubRequestDTO> packetIdsNotAvailable = packetIds.stream()

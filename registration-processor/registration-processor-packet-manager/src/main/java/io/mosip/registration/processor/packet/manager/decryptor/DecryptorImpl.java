@@ -9,6 +9,7 @@ import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 
 import io.mosip.kernel.core.http.RequestWrapper;
+import io.mosip.kernel.core.util.DateUtils2;
 import io.mosip.registration.processor.packet.manager.constant.CryptomanagerConstant;
 import org.apache.commons.io.IOUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -21,13 +22,13 @@ import org.springframework.web.client.HttpServerErrorException;
 import io.mosip.kernel.core.exception.ServiceError;
 import io.mosip.kernel.core.logger.spi.Logger;
 import io.mosip.kernel.core.util.CryptoUtil;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.code.ApiName;
 import io.mosip.registration.processor.core.code.EventId;
 import io.mosip.registration.processor.core.code.EventName;
 import io.mosip.registration.processor.core.code.EventType;
 import io.mosip.registration.processor.core.code.ModuleName;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
+import io.mosip.registration.processor.core.constant.PacketDecryptionFailureExceptionConstant;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.PacketDecryptionFailureException;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
@@ -37,7 +38,6 @@ import io.mosip.registration.processor.core.logger.RegProcessorLogger;
 import io.mosip.registration.processor.core.spi.restclient.RegistrationProcessorRestClientService;
 import io.mosip.registration.processor.packet.manager.dto.CryptomanagerRequestDto;
 import io.mosip.registration.processor.packet.manager.dto.CryptomanagerResponseDto;
-import io.mosip.registration.processor.packet.manager.exception.PacketDecryptionFailureExceptionConstant;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 
 /**
@@ -108,14 +108,14 @@ public class DecryptorImpl implements Decryptor {
 			cryptomanagerRequestDto.setAad(CryptoUtil.encodeToURLSafeBase64(aad));
 			cryptomanagerRequestDto.setSalt(CryptoUtil.encodeToURLSafeBase64(nonce));
 			cryptomanagerRequestDto.setData(CryptoUtil.encodeToURLSafeBase64(encryptedData));
-			cryptomanagerRequestDto.setTimeStamp(DateUtils.getUTCCurrentDateTime());
+			cryptomanagerRequestDto.setTimeStamp(DateUtils2.getUTCCurrentDateTime());
 
 			request.setId(env.getProperty(DECRYPT_SERVICE_ID));
 			request.setMetadata(null);
 			request.setRequest(cryptomanagerRequestDto);
 			DateTimeFormatter format = DateTimeFormatter.ofPattern(env.getProperty(DATETIME_PATTERN));
 			LocalDateTime localdatetime = LocalDateTime
-					.parse(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
+					.parse(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)), format);
 			request.setRequesttime(localdatetime);
 			request.setVersion(env.getProperty(REG_PROC_APPLICATION_VERSION));
 			CryptomanagerResponseDto response;
@@ -176,16 +176,6 @@ public class DecryptorImpl implements Decryptor {
 						PacketDecryptionFailureExceptionConstant.MOSIP_PACKET_DECRYPTION_FAILURE_ERROR_CODE
 								.getErrorCode(),
 						httpClientException.getResponseBodyAsString());
-			} else if (e.getCause() instanceof HttpServerErrorException) {
-				HttpServerErrorException httpServerException = (HttpServerErrorException) e.getCause();
-				description.setMessage(PlatformErrorMessages.RPR_PDS_PACKET_DECRYPTION_FAILURE.getMessage()
-						+ httpServerException.getResponseBodyAsString());
-				description.setCode(PlatformErrorMessages.RPR_PDS_PACKET_DECRYPTION_FAILURE.getCode());
-
-				throw new PacketDecryptionFailureException(
-						PacketDecryptionFailureExceptionConstant.MOSIP_PACKET_DECRYPTION_FAILURE_ERROR_CODE
-								.getErrorCode(),
-						httpServerException.getResponseBodyAsString());
 			} else {
 				description.setMessage(
 						PlatformErrorMessages.RPR_PDS_PACKET_DECRYPTION_FAILURE.getMessage() + e.getMessage());

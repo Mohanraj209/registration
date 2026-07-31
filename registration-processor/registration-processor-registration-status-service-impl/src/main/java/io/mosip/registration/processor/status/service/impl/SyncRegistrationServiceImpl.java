@@ -16,7 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-import io.mosip.kernel.core.util.DateUtils;
+import io.mosip.kernel.core.util.*;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -32,10 +32,6 @@ import io.mosip.kernel.core.exception.IOException;
 import io.mosip.kernel.core.idvalidator.exception.InvalidIDException;
 import io.mosip.kernel.core.idvalidator.spi.RidValidator;
 import io.mosip.kernel.core.logger.spi.Logger;
-import io.mosip.kernel.core.util.CryptoUtil;
-import io.mosip.kernel.core.util.HMACUtils2;
-import io.mosip.kernel.core.util.JsonUtils;
-import io.mosip.kernel.core.util.StringUtils;
 import io.mosip.kernel.core.util.exception.JsonMappingException;
 import io.mosip.kernel.core.util.exception.JsonParseException;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
@@ -199,33 +195,9 @@ public class SyncRegistrationServiceImpl implements SyncRegistrationService<Sync
 			regProcLogger.info(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 					"", "");
 		} catch (DataAccessLayerException e) {
-			description.setMessage(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getMessage());
-			description.setCode(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getCode());
-			description.setMessage("DataAccessLayerException while syncing Registartion Id's" + "::" + e.getMessage());
-
-			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
-					"", e.getMessage() + ExceptionUtils.getStackTrace(e));
-			throw new TablenotAccessibleException(
-					PlatformErrorMessages.RPR_RGS_REGISTRATION_TABLE_NOT_ACCESSIBLE.getMessage(), e);
+			handleTableNotAccessibleException(description, e);
 		} finally {
-			if (isTransactionSuccessful) {
-				eventName = eventId.equalsIgnoreCase(EventId.RPR_402.toString()) ? EventName.UPDATE.toString()
-						: EventName.ADD.toString();
-				eventType = EventType.BUSINESS.toString();
-			} else {
-				description.setMessage(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getMessage());
-				description.setCode(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getCode());
-				eventId = EventId.RPR_405.toString();
-				eventName = EventName.EXCEPTION.toString();
-				eventType = EventType.SYSTEM.toString();
-			}
-			/** Module-Id can be Both Success/Error code */
-			String moduleId = isTransactionSuccessful
-					? PlatformSuccessMessages.RPR_SYNC_REGISTRATION_SERVICE_SUCCESS.getCode()
-					: description.getCode();
-			String moduleName = ModuleName.SYNC_REGISTRATION_SERVICE.toString();
-			auditLogRequestBuilder.createAuditRequestBuilder(description.getMessage(), eventId, eventName, eventType,
-					moduleId, moduleName, AuditLogConstant.MULTIPLE_ID.toString());
+			createAudit(description, isTransactionSuccessful);
 
 		}
 		regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.USERID.toString(), "",
@@ -260,39 +232,47 @@ public class SyncRegistrationServiceImpl implements SyncRegistrationService<Sync
 			regProcLogger.info(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 					"", "");
 		} catch (DataAccessLayerException e) {
-			description.setMessage(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getMessage());
-			description.setCode(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getCode());
-			description.setMessage("DataAccessLayerException while syncing Registartion Id's" + "::" + e.getMessage());
-
-			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
-					"", e.getMessage() + ExceptionUtils.getStackTrace(e));
-			throw new TablenotAccessibleException(
-					PlatformErrorMessages.RPR_RGS_REGISTRATION_TABLE_NOT_ACCESSIBLE.getMessage(), e);
+			handleTableNotAccessibleException(description, e);
 		} finally {
-			if (isTransactionSuccessful) {
-				eventName = eventId.equalsIgnoreCase(EventId.RPR_402.toString()) ? EventName.UPDATE.toString()
-						: EventName.ADD.toString();
-				eventType = EventType.BUSINESS.toString();
-			} else {
-				description.setMessage(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getMessage());
-				description.setCode(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getCode());
-				eventId = EventId.RPR_405.toString();
-				eventName = EventName.EXCEPTION.toString();
-				eventType = EventType.SYSTEM.toString();
-			}
-			/** Module-Id can be Both Success/Error code */
-			String moduleId = isTransactionSuccessful
-					? PlatformSuccessMessages.RPR_SYNC_REGISTRATION_SERVICE_SUCCESS.getCode()
-					: description.getCode();
-			String moduleName = ModuleName.SYNC_REGISTRATION_SERVICE.toString();
-			auditLogRequestBuilder.createAuditRequestBuilder(description.getMessage(), eventId, eventName, eventType,
-					moduleId, moduleName, AuditLogConstant.MULTIPLE_ID.toString());
+			createAudit(description, isTransactionSuccessful);
 
 		}
 		regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.USERID.toString(), "",
 				"SyncRegistrationServiceImpl::sync()::exit");
 		return syncResponseList;
 
+	}
+
+	private void handleTableNotAccessibleException(LogDescription description, DataAccessLayerException e) {
+		description.setMessage(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getMessage());
+		description.setCode(PlatformErrorMessages.RPR_RGS_DATA_ACCESS_EXCEPTION.getCode());
+		description.setMessage("DataAccessLayerException while syncing Registartion Id's" + "::" + e.getMessage());
+
+		regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+				"", e.getMessage() + ExceptionUtils.getStackTrace(e));
+		throw new TablenotAccessibleException(
+				PlatformErrorMessages.RPR_RGS_REGISTRATION_TABLE_NOT_ACCESSIBLE.getMessage(), e);
+	}
+
+	private void createAudit(LogDescription description, boolean isTransactionSuccessful) {
+		if (isTransactionSuccessful) {
+			eventName = eventId.equalsIgnoreCase(EventId.RPR_402.toString()) ? EventName.UPDATE.toString()
+					: EventName.ADD.toString();
+			eventType = EventType.BUSINESS.toString();
+		} else {
+			description.setMessage(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getMessage());
+			description.setCode(PlatformErrorMessages.RPR_RGS_REGISTRATION_SYNC_SERVICE_FAILED.getCode());
+			eventId = EventId.RPR_405.toString();
+			eventName = EventName.EXCEPTION.toString();
+			eventType = EventType.SYSTEM.toString();
+		}
+		/** Module-Id can be Both Success/Error code */
+		String moduleId = isTransactionSuccessful
+				? PlatformSuccessMessages.RPR_SYNC_REGISTRATION_SERVICE_SUCCESS.getCode()
+				: description.getCode();
+		String moduleName = ModuleName.SYNC_REGISTRATION_SERVICE.toString();
+		auditLogRequestBuilder.createAuditRequestBuilder(description.getMessage(), eventId, eventName, eventType,
+				moduleId, moduleName, AuditLogConstant.MULTIPLE_ID.toString());
 	}
 
 	/**
@@ -861,7 +841,7 @@ public class SyncRegistrationServiceImpl implements SyncRegistrationService<Sync
 	private void getAdditionalInfo(String referenceId, byte[] optionalValues, Map<String, String> additionalInfo)  {
 		String name=null;
 		try {
-			String decryptedData=decryptor.decrypt(CryptoUtil.encodeBase64String(optionalValues),referenceId, DateUtils.formatToISOString(DateUtils.getUTCCurrentDateTime()));
+			String decryptedData=decryptor.decrypt(CryptoUtil.encodeBase64String(optionalValues),referenceId, DateUtils2.formatToISOString(DateUtils2.getUTCCurrentDateTime()));
 			JSONObject jsonObject=new JSONObject(decryptedData);
 			name=jsonObject.getString("name");
 			additionalInfo.put("name",name);

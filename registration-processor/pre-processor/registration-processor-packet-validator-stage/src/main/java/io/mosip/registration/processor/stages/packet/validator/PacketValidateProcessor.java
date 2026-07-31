@@ -4,12 +4,16 @@ import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Map;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
+import io.mosip.kernel.core.util.DateUtils2;
+import io.mosip.kernel.core.util.DateUtils;
+import io.mosip.registration.processor.core.exception.PacketManagerNonRecoverableException;
 import io.mosip.registration.processor.packet.storage.utils.Utilities;
 import org.apache.commons.io.IOUtils;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -67,6 +71,7 @@ import io.mosip.registration.processor.packet.manager.decryptor.Decryptor;
 import io.mosip.registration.processor.packet.storage.exception.IdentityNotFoundException;
 import io.mosip.registration.processor.packet.storage.exception.ParsingException;
 import io.mosip.registration.processor.packet.storage.utils.PriorityBasedPacketManagerService;
+import io.mosip.registration.processor.packet.storage.utils.Utilities;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.stages.utils.AuditUtility;
 import io.mosip.registration.processor.stages.utils.NotificationUtility;
@@ -154,6 +159,8 @@ public class PacketValidateProcessor {
 	private static final String PRE_REG_ID = "mosip.pre-registration.datasync.store";
 	private static final String VERSION = "1.0";
 
+
+
 	@Autowired
 	RegistrationExceptionMapperUtil registrationStatusMapperUtil;
 
@@ -166,17 +173,16 @@ public class PacketValidateProcessor {
 	@Autowired
 	private NotificationUtility notificationUtility;
 
+	@Value("${mosip.registration.processor.datetime.pattern}")
+	private String dateformat;
+
 	public MessageDTO process(MessageDTO object, String stageName) {
 		TrimExceptionMessage trimMessage = new TrimExceptionMessage();
 		LogDescription description = new LogDescription();
 		PacketValidationDto packetValidationDto = new PacketValidationDto();
 		String registrationId = null;
-
 		InternalRegistrationStatusDto registrationStatusDto = new InternalRegistrationStatusDto();
 		try {
-			registrationStatusDto
-					.setLatestTransactionTypeCode(RegistrationTransactionTypeCode.PRINT_SERVICE.toString());
-			registrationStatusDto.setRegistrationStageName(stageName);
 			object.setMessageBusAddress(MessageBusAddress.PACKET_VALIDATOR_BUS_IN);
 			object.setIsValid(Boolean.FALSE);
 			object.setInternalError(Boolean.TRUE);
@@ -184,35 +190,32 @@ public class PacketValidateProcessor {
 					"", "PacketValidateProcessor::process()::entry");
 			registrationId = object.getRid();
 			packetValidationDto.setTransactionSuccessful(false);
-
 			registrationStatusDto = registrationStatusService.getRegistrationStatus(
 					registrationId, object.getReg_type(), object.getIteration(), object.getWorkflowInstanceId());
-
 			registrationStatusDto
 					.setLatestTransactionTypeCode(RegistrationTransactionTypeCode.VALIDATE_PACKET.toString());
 			registrationStatusDto.setRegistrationStageName(stageName);
+			setPacketCreatedDateTime(registrationStatusDto);
 			boolean isValidSupervisorStatus = isValidSupervisorStatus(object);
 			if (isValidSupervisorStatus) {
 				Boolean isValid = compositePacketValidator.validate(object.getRid(),
 						registrationStatusDto.getRegistrationType(), packetValidationDto);
+
 				if (isValid) {
 					// save audit details
 					InternalRegistrationStatusDto finalRegistrationStatusDto = registrationStatusDto;
 					String finalRegistrationId = registrationId;
-					Runnable r = () -> {
-						try {
-							auditUtility.saveAuditDetails(finalRegistrationId,
-									finalRegistrationStatusDto.getRegistrationType());
-						} catch (Exception e) {
-							regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
-									LoggerFileConstant.REGISTRATIONID.toString(),
-									description.getCode() + " Inside Runnable ", "");
 
-						}
-					};
-					ExecutorService es = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
-					es.submit(r);
-					es.shutdown();
+					try {
+						auditUtility.saveAuditDetails(finalRegistrationId,
+								finalRegistrationStatusDto.getRegistrationType());
+					} catch (Exception e) {
+						regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
+								LoggerFileConstant.REGISTRATIONID.toString(),
+								description.getCode() + " Inside Runnable ", "");
+
+					}
+
 					registrationStatusDto
 							.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.SUCCESS.toString());
 					object.setIsValid(Boolean.TRUE);
@@ -277,8 +280,21 @@ public class PacketValidateProcessor {
 			object.setInternalError(Boolean.FALSE);
 			registrationStatusDto.setUpdatedBy(USER);
 			SyncRegistrationEntity regEntity = syncRegistrationService.findByWorkflowInstanceId(object.getWorkflowInstanceId());
-			sendNotification(regEntity, registrationStatusDto, packetValidationDto.isTransactionSuccessful());
-		} catch (PacketManagerException e) {
+			sendNotification(regEntity, registrationStatusDto, packetValidationDto.isTransactionSuccessful(),isValidSupervisorStatus);
+		} catch (PacketManagerNonRecoverableException exc) {
+			registrationStatusDto.setStatusCode(RegistrationStatusCode.FAILED.toString());
+			registrationStatusDto.setStatusComment(
+					trimMessage.trimExceptionMessage(StatusUtil.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION.getMessage() + exc.getMessage()));
+			registrationStatusDto.setSubStatusCode(StatusUtil.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION.getCode() );
+			registrationStatusDto.setLatestTransactionStatusCode(
+					registrationStatusMapperUtil.getStatusCode(RegistrationExceptionTypeCode.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION));
+			packetValidationDto.setTransactionSuccessful(false);
+			description.setMessage(PlatformErrorMessages.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION.getMessage());
+			description.setCode(PlatformErrorMessages.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION.getCode());
+			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					description.getCode() + " -- " + registrationId,
+					PlatformErrorMessages.PACKET_MANAGER_NON_RECOVERABLE_EXCEPTION.getMessage() + ExceptionUtils.getStackTrace(exc));
+		}catch (PacketManagerException e) {
 			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 					registrationId,
 					RegistrationStatusCode.FAILED.toString() + e.getMessage() + ExceptionUtils.getStackTrace(e));
@@ -447,6 +463,33 @@ public class PacketValidateProcessor {
 
 	}
 
+
+	private void setPacketCreatedDateTime(InternalRegistrationStatusDto registrationStatusDto) throws ApisResourceAccessException, PacketManagerException, JsonProcessingException, IOException {
+		try {
+			Map<String, String> metaInfo = packetManagerService.getMetaInfo(
+					registrationStatusDto.getRegistrationId(), registrationStatusDto.getRegistrationType(), ProviderStageName.PACKET_VALIDATOR);
+			DateTimeFormatter formatter = DateTimeFormatter.ofPattern(dateformat);
+			String packetCreatedDateTime = metaInfo.get(JsonConstant.CREATIONDATE);
+			if (packetCreatedDateTime != null && !packetCreatedDateTime.isEmpty()) {
+				LocalDateTime dateTime = DateUtils2.parseToLocalDateTime(packetCreatedDateTime);
+				registrationStatusDto.setPacketCreateDateTime(dateTime);
+			} else {
+				regProcLogger.warn(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+						" -- " + registrationStatusDto.getRefId(),
+						PlatformErrorMessages.RPR_PVM_PACKET_CREATED_DATE_TIME_EMPTY_OR_NULL.getMessage());
+			}
+		} catch (DateTimeParseException e) {
+			regProcLogger.warn(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					" -- " + registrationStatusDto.getRefId(),
+					PlatformErrorMessages.RPR_PVM_PACKET_CREATED_DATE_TIME_PARSE_EXCEPTION.getMessage() + e.getMessage());
+		}catch (IllegalArgumentException ex)
+		{
+			regProcLogger.warn(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					" -- " + registrationStatusDto.getRefId(),
+					PlatformErrorMessages.RPR_PVM_INVALID_ARGUMENT_EXCEPTION.getMessage() + ex.getMessage());
+		}
+	}
+
 		private boolean isValidSupervisorStatus(MessageDTO messageDTO) {
 			SyncRegistrationEntity regEntity = syncRegistrationService.findByWorkflowInstanceId(messageDTO.getWorkflowInstanceId());
 			if (regEntity.getSupervisorStatus().equalsIgnoreCase(APPROVED)) {
@@ -546,7 +589,7 @@ public class PacketValidateProcessor {
 	}
 
 	private void sendNotification(SyncRegistrationEntity regEntity,
-								  InternalRegistrationStatusDto registrationStatusDto, boolean isTransactionSuccessful) {
+								  InternalRegistrationStatusDto registrationStatusDto, boolean isTransactionSuccessful,boolean isValidSupervisorStatus) {
 		try {
 			String registrationId = registrationStatusDto.getRegistrationId();
 			if (regEntity.getOptionalValues() != null) {
@@ -563,11 +606,11 @@ public class PacketValidateProcessor {
 				if (isTransactionSuccessful) {
 					isProcessingSuccess = true;
 					notificationUtility.sendNotification(registrationAdditionalInfoDTO, registrationStatusDto,
-							regEntity, allNotificationTypes, isProcessingSuccess);
+							regEntity, allNotificationTypes, isProcessingSuccess,isValidSupervisorStatus);
 				} else {
 					isProcessingSuccess = false;
 					notificationUtility.sendNotification(registrationAdditionalInfoDTO, registrationStatusDto,
-							regEntity, allNotificationTypes, isProcessingSuccess);
+							regEntity, allNotificationTypes, isProcessingSuccess,isValidSupervisorStatus);
 				}
 				boolean isDeleted = syncRegistrationService.deleteAdditionalInfo(regEntity);
 				if (isDeleted) {

@@ -1,9 +1,11 @@
 package io.mosip.registration.processor.status.api.controller.handler;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import io.mosip.kernel.core.util.DateUtils2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.Environment;
@@ -18,13 +20,11 @@ import org.springframework.web.context.request.WebRequest;
 
 import com.fasterxml.jackson.core.JsonParseException;
 import com.fasterxml.jackson.databind.JsonMappingException;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import io.mosip.kernel.core.exception.BaseCheckedException;
 import io.mosip.kernel.core.exception.BaseUncheckedException;
 import io.mosip.kernel.core.logger.spi.Logger;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
 import io.mosip.registration.processor.core.logger.RegProcessorLogger;
@@ -36,7 +36,6 @@ import io.mosip.registration.processor.status.dto.ErrorDTO;
 import io.mosip.registration.processor.status.exception.RegStatusAppException;
 import io.mosip.registration.processor.status.exception.TablenotAccessibleException;
 import io.mosip.registration.processor.status.sync.response.dto.RegStatusResponseDTO;
-
 @RestControllerAdvice(assignableTypes = RegistrationExternalStatusController.class)
 public class RegistrationExternalStatusExceptionHandler {
 	
@@ -51,6 +50,9 @@ public class RegistrationExternalStatusExceptionHandler {
 
 	@Autowired
 	DigitalSignatureUtility digitalSignatureUtility;
+	
+	@Autowired
+	ObjectMapper obj;
 
 	private static final String RESPONSE_SIGNATURE = "Response-Signature";
 
@@ -148,15 +150,21 @@ public class RegistrationExternalStatusExceptionHandler {
 			response.setErrors(errors);
 		}
 
-		response.setResponsetime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		response.setResponsetime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		response.setVersion(env.getProperty(REG_EXTERNAL_STATUS_APPLICATION_VERSION));
 		response.setResponse(null);
-		Gson gson = new GsonBuilder().serializeNulls().create();
-
+	
 		if (isEnabled) {
 			HttpHeaders headers = new HttpHeaders();
-			headers.add(RESPONSE_SIGNATURE, digitalSignatureUtility.getDigitalSignature(gson.toJson(response)));
-			return ResponseEntity.ok().headers(headers).body(gson.toJson(response));
+			String res=null;
+			try {
+				res=obj.writeValueAsString(response);
+			} catch (IOException e1) {
+				regProcLogger.error("Error while processing response",e1);
+				
+			}
+			headers.add(RESPONSE_SIGNATURE, digitalSignatureUtility.getDigitalSignature(res));
+			return ResponseEntity.ok().headers(headers).body(res);
 		}
 		return ResponseEntity.status(HttpStatus.OK).body(response);
 

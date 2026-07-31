@@ -6,10 +6,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-import io.mosip.kernel.core.util.StringUtils;
-import io.mosip.kernel.core.util.exception.JsonProcessingException;
-import io.mosip.registration.processor.core.exception.PacketManagerException;
-import io.mosip.registration.processor.core.constant.ProviderStageName;
 import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.json.simple.JSONObject;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +16,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import io.mosip.kernel.core.fsadapter.exception.FSAdapterException;
 import io.mosip.kernel.core.logger.spi.Logger;
+import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.code.AbisStatusCode;
@@ -34,8 +31,10 @@ import io.mosip.registration.processor.core.code.RegistrationTransactionTypeCode
 import io.mosip.registration.processor.core.constant.AbisConstant;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
 import io.mosip.registration.processor.core.constant.MappingJsonConstants;
+import io.mosip.registration.processor.core.constant.ProviderStageName;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.PacketDecryptionFailureException;
+import io.mosip.registration.processor.core.exception.PacketManagerException;
 import io.mosip.registration.processor.core.exception.RegistrationProcessorCheckedException;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
 import io.mosip.registration.processor.core.exception.util.PlatformSuccessMessages;
@@ -56,6 +55,7 @@ import io.mosip.registration.processor.core.util.RegistrationExceptionMapperUtil
 import io.mosip.registration.processor.packet.storage.dto.ApplicantInfoDto;
 import io.mosip.registration.processor.packet.storage.utils.ABISHandlerUtil;
 import io.mosip.registration.processor.packet.storage.utils.Utilities;
+import io.mosip.registration.processor.packet.storage.utils.Utility;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.stages.app.constants.DemoDedupeConstants;
 import io.mosip.registration.processor.stages.dto.DemoDedupeStatusDTO;
@@ -100,7 +100,7 @@ public class DemodedupeProcessor {
 
 	/** The utility. */
 	@Autowired
-	Utilities utility;
+	Utilities utilities;
 
 	/** The registration status dao. */
 	@Autowired
@@ -112,6 +112,9 @@ public class DemodedupeProcessor {
 
 	@Autowired
 	private Environment env;
+
+	@Autowired
+	Utility utility;
 
 	/** The is match found. */
 	private volatile boolean isMatchFound = false;
@@ -160,6 +163,7 @@ public class DemodedupeProcessor {
 		boolean isDemoDedupeSkip = true;
 		String moduleName = ModuleName.DEMO_DEDUPE.toString();
 		String moduleId = PlatformSuccessMessages.RPR_PKR_DEMO_DE_DUP.getCode();
+		boolean isDuplicateRequestForSameTransactionId = false;
 		InternalRegistrationStatusDto registrationStatusDto = registrationStatusService
 				.getRegistrationStatus(registrationId, object.getReg_type(), object.getIteration(), object.getWorkflowInstanceId());
 
@@ -168,9 +172,10 @@ public class DemodedupeProcessor {
 			IndividualDemographicDedupe demographicData = packetInfoManager.
 					getIdentityKeysAndFetchValuesFromJSON(registrationId, registrationStatusDto.getRegistrationType(), ProviderStageName.DEMO_DEDUPE);
 
-			JSONObject regProcessorIdentityJson = utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
-			String uinFieldCheck = utility.getUIn(registrationId, registrationStatusDto.getRegistrationType(), ProviderStageName.DEMO_DEDUPE);
-			JSONObject jsonObject = utility.retrieveIdrepoJson(uinFieldCheck);
+			JSONObject regProcessorIdentityJson = utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
+			String uinFieldCheck = utility.getUIn(registrationId, registrationStatusDto.getRegistrationType(),
+					ProviderStageName.DEMO_DEDUPE);
+			JSONObject jsonObject = utilities.retrieveIdrepoJson(uinFieldCheck);
 			if (jsonObject == null) {
 				DemoDedupeStatusDTO demoDedupeStatusDTO = insertDemodedupDetailsAndPerformDedup(demographicData, registrationStatusDto,
 						duplicateDtos, object, moduleId, moduleName, isDemoDedupeSkip, description);
@@ -180,6 +185,9 @@ public class DemodedupeProcessor {
 				insertDemodedupDetails(demographicData, regProcessorIdentityJson, jsonObject, registrationStatusDto,
 						object, moduleId, moduleName);
 			}
+			if (abisHandlerUtil.getPacketStatus(registrationStatusDto)
+					.equalsIgnoreCase(AbisConstant.DUPLICATE_FOR_SAME_TRANSACTION_ID))
+				isDuplicateRequestForSameTransactionId = true;
 
 			registrationStatusDto.setRegistrationStageName(stageName);
 			if (isTransactionSuccessful) {
@@ -236,6 +244,7 @@ public class DemodedupeProcessor {
 					description.getMessage() + ExceptionUtils.getStackTrace(ex));
 			object.setInternalError(Boolean.TRUE);
 		} finally {
+			if (!isDuplicateRequestForSameTransactionId) {
 			registrationStatusDto
 					.setLatestTransactionTypeCode(RegistrationTransactionTypeCode.DEMOGRAPHIC_VERIFICATION.toString());
 			moduleId = isTransactionSuccessful ? PlatformSuccessMessages.RPR_PKR_DEMO_DE_DUP.getCode()
@@ -277,7 +286,12 @@ public class DemodedupeProcessor {
 
 			auditLogRequestBuilder.createAuditRequestBuilder(description.getMessage(), eventId, eventName, eventType,
 					moduleId, moduleName, registrationId);
-
+		} else {
+			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					registrationId, "Duplicate request received for same latest transaction id. This will be ignored.");
+			object.setIsValid(false);
+			object.setInternalError(true);
+			 }
 		}
 
 		return object;
@@ -346,7 +360,8 @@ public class DemodedupeProcessor {
 		if (packetStatus.equalsIgnoreCase(AbisConstant.PRE_ABIS_IDENTIFICATION)) {
 			packetInfoManager.saveIndividualDemographicDedupeUpdatePacket(demographicData, registrationId, moduleId,
 					registrationStatusDto.getRegistrationType(),moduleName,registrationStatusDto.getIteration(), registrationStatusDto.getWorkflowInstanceId());
-			int age = utility.getApplicantAge(registrationId, registrationStatusDto.getRegistrationType(), ProviderStageName.DEMO_DEDUPE);
+			int age = utility.getApplicantAge(registrationId, registrationStatusDto.getRegistrationType(),
+					ProviderStageName.DEMO_DEDUPE);
 			int ageThreshold = Integer.parseInt(ageLimit);
 			if (age < ageThreshold) {
 				if (infantDedupe.equalsIgnoreCase(GLOBAL_CONFIG_TRUE_VALUE)) {
@@ -357,7 +372,8 @@ public class DemodedupeProcessor {
 				}
 			}
 			else {
-				if (StringUtils.isNotEmpty(env.getProperty(DEMODEDUPEENABLE)) && env.getProperty(DEMODEDUPEENABLE).trim().equalsIgnoreCase(TRUE)) {
+				String  demo=env.getProperty(DEMODEDUPEENABLE);
+				if (demo != null && demo.trim().equalsIgnoreCase(TRUE)) {
 					isDemoDedupeSkip = false;
 				duplicateDtos = performDemoDedupe(registrationStatusDto, object, description);
 				if (duplicateDtos.isEmpty())

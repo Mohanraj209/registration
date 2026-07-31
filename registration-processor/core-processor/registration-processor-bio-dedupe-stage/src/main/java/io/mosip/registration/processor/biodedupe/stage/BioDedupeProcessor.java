@@ -1,5 +1,21 @@
 package io.mosip.registration.processor.biodedupe.stage;
 
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.json.simple.JSONArray;
+import org.json.simple.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.dao.DataAccessException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
 import io.mosip.kernel.core.logger.spi.Logger;
 import io.mosip.kernel.core.util.StringUtils;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
@@ -43,27 +59,13 @@ import io.mosip.registration.processor.packet.storage.exception.IdentityNotFound
 import io.mosip.registration.processor.packet.storage.utils.ABISHandlerUtil;
 import io.mosip.registration.processor.packet.storage.utils.PriorityBasedPacketManagerService;
 import io.mosip.registration.processor.packet.storage.utils.Utilities;
+import io.mosip.registration.processor.packet.storage.utils.Utility;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.status.code.RegistrationStatusCode;
 import io.mosip.registration.processor.status.dto.InternalRegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.RegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.SyncTypeDto;
 import io.mosip.registration.processor.status.service.RegistrationStatusService;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.json.simple.JSONArray;
-import org.json.simple.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.dao.DataAccessException;
-import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
-
-import java.io.IOException;
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 /**
  * The Class BioDedupeProcessor.
@@ -115,6 +117,9 @@ public class BioDedupeProcessor {
 
 	@Autowired
 	private BioDedupeService biodedupeServiceImpl;
+
+	@Autowired
+	Utility utility;
 
 	/** The config server file storage URL. */
 	@Value("${config.server.file.storage.uri}")
@@ -495,7 +500,7 @@ public class BioDedupeProcessor {
 	private boolean infantCheck(String registrationId, String registrationType) throws ApisResourceAccessException, JsonProcessingException, PacketManagerException, IOException {
 		boolean isInfant = false;
 		if (RegistrationType.NEW.name().equalsIgnoreCase(registrationType)) {
-			int age = utilities.getApplicantAge(registrationId, registrationType, ProviderStageName.BIO_DEDUPE);
+			int age = utility.getApplicantAge(registrationId, registrationType, ProviderStageName.BIO_DEDUPE);
 			int ageThreshold = Integer.parseInt(ageLimit);
 			isInfant = age < ageThreshold;
 		} else {
@@ -527,7 +532,7 @@ public class BioDedupeProcessor {
 		if (matchedRegIds.isEmpty()) {
 			registrationStatusDto.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.FAILED.toString());
 			object.setIsValid(Boolean.FALSE);
-			registrationStatusDto.setStatusCode(RegistrationStatusCode.FAILED.name());
+			registrationStatusDto.setStatusCode(RegistrationStatusCode.REJECTED.name());
 			registrationStatusDto.setStatusComment(StatusUtil.LOST_PACKET_BIOMETRICS_NOT_FOUND.getMessage());
 			registrationStatusDto.setSubStatusCode(StatusUtil.LOST_PACKET_BIOMETRICS_NOT_FOUND.getCode());
 			regProcLogger.info(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),

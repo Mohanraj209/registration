@@ -19,6 +19,7 @@ import org.springframework.web.client.HttpClientErrorException;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 
+import io.mosip.commons.khazana.exception.ObjectStoreAdapterException;
 import io.mosip.commons.khazana.spi.ObjectStoreAdapter;
 import io.mosip.kernel.core.exception.ExceptionUtils;
 import io.mosip.kernel.core.logger.spi.Logger;
@@ -34,6 +35,7 @@ import io.mosip.registration.processor.core.code.ModuleName;
 import io.mosip.registration.processor.core.code.RegistrationExceptionTypeCode;
 import io.mosip.registration.processor.core.code.RegistrationTransactionStatusCode;
 import io.mosip.registration.processor.core.code.RegistrationTransactionTypeCode;
+import io.mosip.registration.processor.core.constant.LandingZoneTypeConstant;
 import io.mosip.registration.processor.core.constant.LoggerFileConstant;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.ObjectStoreNotAccessibleException;
@@ -62,8 +64,8 @@ import io.mosip.registration.processor.status.dto.SyncRegistrationDto;
 import io.mosip.registration.processor.status.dto.SyncResponseDto;
 import io.mosip.registration.processor.status.entity.SyncRegistrationEntity;
 import io.mosip.registration.processor.status.exception.TablenotAccessibleException;
-import io.mosip.registration.processor.status.service.RegistrationStatusService;
 import io.mosip.registration.processor.status.service.AdditionalInfoRequestService;
+import io.mosip.registration.processor.status.service.RegistrationStatusService;
 import io.mosip.registration.processor.status.service.SyncRegistrationService;
 
 /**
@@ -88,6 +90,12 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
     private static final String JSON = ".json";
     private static final String FORWARD_SLASH = "/";
 
+    @Value("${mosip.regproc.landing.zone.account.name}")
+    private String landingZoneAccount;
+	
+	@Value("${mosip.regproc.landing.zone.type:ObjectStore}")
+    private String landingZoneType;
+    
     @Value("${packet.manager.account.name}")
     private String packetManagerAccount;
 
@@ -196,7 +204,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
             dto.setLatestTransactionTypeCode(RegistrationTransactionTypeCode.UPLOAD_PACKET.toString());
             dto.setRegistrationStageName(stageName);
 
-            final byte[] encryptedByteArray = getPakcetFromDMZ(regEntity.getPacketId());
+            final byte[] encryptedByteArray = getPakcetFromDMZ(regEntity.getPacketId(),registrationId);
 
             if (encryptedByteArray != null) {
 
@@ -247,7 +255,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
 
                  dto.setLatestTransactionStatusCode(registrationStatusMapperUtil
                          .getStatusCode(RegistrationExceptionTypeCode.PACKET_NOT_FOUND_EXCEPTION));
-                 dto.setStatusCode(RegistrationExceptionTypeCode.PACKET_NOT_FOUND_EXCEPTION.toString());
+					dto.setStatusCode(RegistrationStatusCode.FAILED.toString());
                  dto.setStatusComment(StatusUtil.PACKET_NOT_FOUND_LANDING_ZONE.getMessage());
                  dto.setSubStatusCode(StatusUtil.PACKET_NOT_FOUND_LANDING_ZONE.getCode());
                  dto.setUpdatedBy(USER);
@@ -422,7 +430,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
             if (!isInputFileClean) {
                 description.setMessage(PlatformErrorMessages.RPR_PUM_PACKET_VIRUS_SCAN_FAILED.getMessage());
                 description.setCode(PlatformErrorMessages.RPR_PUM_PACKET_VIRUS_SCAN_FAILED.getCode());
-                dto.setStatusCode(RegistrationExceptionTypeCode.VIRUS_SCAN_FAILED_EXCEPTION.toString());
+				dto.setStatusCode(RegistrationStatusCode.FAILED.toString());
                 dto.setStatusComment(StatusUtil.VIRUS_SCANNER_FAILED_UPLOADER.getMessage());
                 dto.setSubStatusCode(StatusUtil.VIRUS_SCANNER_FAILED_UPLOADER.getCode());
                 dto.setLatestTransactionStatusCode(registrationStatusMapperUtil
@@ -435,7 +443,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
 			messageDTO.setInternalError(Boolean.TRUE);
 			description.setMessage(PlatformErrorMessages.RPR_PUM_PACKET_VIRUS_SCANNER_SERVICE_FAILED.getMessage());
 			description.setCode(PlatformErrorMessages.RPR_PUM_PACKET_VIRUS_SCANNER_SERVICE_FAILED.getCode());
-			dto.setStatusCode(RegistrationExceptionTypeCode.VIRUS_SCANNER_SERVICE_FAILED.toString());
+			dto.setStatusCode(RegistrationStatusCode.FAILED.toString());
 			dto.setStatusComment(trimExpMessage.trimExceptionMessage(
 					StatusUtil.VIRUS_SCANNER_SERVICE_NOT_ACCESSIBLE.getMessage() + " " + e.getMessage()));
 			dto.setSubStatusCode(StatusUtil.VIRUS_SCANNER_SERVICE_NOT_ACCESSIBLE.getCode());
@@ -469,7 +477,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
             description.setCode(PlatformErrorMessages.RPR_PKR_PACKET_HASH_NOT_EQUALS_SYNCED_HASH.getCode());
             dto.setLatestTransactionStatusCode(
                     registrationStatusMapperUtil.getStatusCode(RegistrationExceptionTypeCode.PACKET_HASH_VALIDATION_FAILED));
-            dto.setStatusCode(RegistrationExceptionTypeCode.PACKET_HASH_VALIDATION_FAILED.toString());
+			dto.setStatusCode(RegistrationStatusCode.FAILED.toString());
             dto.setStatusComment(StatusUtil.PACKET_HASHCODE_VALIDATION_FAILED.getMessage());
             dto.setSubStatusCode(StatusUtil.PACKET_HASHCODE_VALIDATION_FAILED.getCode());
             regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
@@ -562,13 +570,21 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
         return maxRetryCount;
     }
 
-    private byte[] getPakcetFromDMZ(String packetId) throws ApisResourceAccessException {
+    private byte[] getPakcetFromDMZ(String packetId, String registrationId) throws ApisResourceAccessException, ObjectStoreNotAccessibleException, IOException {
         List<String> pathSegment = new ArrayList<>();
         pathSegment.add(packetId + extention);
         byte[] packet = null;
 
         try {
+        	if(landingZoneType.equalsIgnoreCase(LandingZoneTypeConstant.DMZ_SERVER)) {
             packet = (byte[]) restClient.getApi(ApiName.NGINXDMZURL, pathSegment, "", null, byte[].class);
+        	}
+        	else if(landingZoneType.equalsIgnoreCase(LandingZoneTypeConstant.OBJECT_STORE)) {
+        	packet=IOUtils.toByteArray(objectStoreAdapter.getObject(landingZoneAccount, registrationId, null, null, packetId));
+        	if(packet==null) {
+        		throw new ObjectStoreNotAccessibleException("Failed to get packet : " +packetId);
+        	}
+        	}
         } catch (ApisResourceAccessException e) {
             if (e.getCause() instanceof HttpClientErrorException) {
                 HttpClientErrorException ex = (HttpClientErrorException) e.getCause();
@@ -576,6 +592,8 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
                     throw new PacketNotFoundException(PlatformErrorMessages.RPR_PUM_PACKET_NOT_FOUND_EXCEPTION.getMessage(), ex);
             } else
                 throw e;
+        } catch(ObjectStoreAdapterException e) {
+        	throw e;
         }
         return packet;
     }
@@ -633,5 +651,7 @@ public class PacketUploaderServiceImpl implements PacketUploaderService<MessageD
         }
         return true;
     }
+
+	
 
 }

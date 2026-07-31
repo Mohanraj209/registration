@@ -6,8 +6,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
-import com.fasterxml.jackson.module.afterburner.AfterburnerModule;
+
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -16,6 +15,7 @@ import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.core.env.Environment;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 
 import brave.Tracer;
@@ -26,10 +26,6 @@ import io.mosip.registration.processor.core.abstractverticle.MosipRouter;
 import io.mosip.registration.processor.core.eventbus.MosipEventBusFactory;
 import io.mosip.registration.processor.core.logger.LogDescription;
 import io.mosip.registration.processor.core.logger.RegProcessorLogger;
-import io.mosip.registration.processor.core.queue.factory.MosipQueueConnectionFactoryImpl;
-import io.mosip.registration.processor.core.queue.impl.MosipActiveMqImpl;
-import io.mosip.registration.processor.core.spi.queue.MosipQueueConnectionFactory;
-import io.mosip.registration.processor.core.spi.queue.MosipQueueManager;
 import io.mosip.registration.processor.core.token.validation.TokenValidator;
 import io.mosip.registration.processor.core.util.DigitalSignatureUtility;
 import io.mosip.registration.processor.core.util.PropertiesUtil;
@@ -147,15 +143,7 @@ public class CoreConfigBean {
 		return configUrls;
 	}
 
-	@Bean
-	MosipQueueManager<?, ?> getMosipQueueManager() {
-		return new MosipActiveMqImpl();
-	}
-
-	@Bean
-	MosipQueueConnectionFactory<?> getMosipQueueConnectionFactory() {
-		return new MosipQueueConnectionFactoryImpl();
-	}
+	
 
 	@Bean
 	public TokenValidator getTokenValidator() {
@@ -196,14 +184,6 @@ public class CoreConfigBean {
 	@Bean
 	public Tracer tracer() {
 		return tracing().tracer();
-	}
-
-	@Bean
-	public ObjectMapper getObjectMapper() {
-		ObjectMapper objectMapper = new ObjectMapper().registerModule(new AfterburnerModule())
-				.registerModule(new JavaTimeModule());
-		objectMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
-		return objectMapper;
 	}
 
 	@Bean

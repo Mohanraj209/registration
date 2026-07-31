@@ -1,9 +1,51 @@
 package io.mosip.registration.processor.verification.service;
 
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertEquals;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+
+import java.io.IOException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+import io.mosip.kernel.core.util.DateUtils2;
+import io.mosip.registration.processor.core.exception.PacketManagerException;
+import io.mosip.registration.processor.core.exception.PacketManagerNonRecoverableException;
+import org.apache.activemq.command.ActiveMQBytesMessage;
+import org.apache.activemq.util.ByteSequence;
+import org.json.simple.JSONObject;
+import org.junit.Before;
+import org.junit.Ignore;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.Mockito;
+import org.mockito.Spy;
+import org.mockito.ArgumentCaptor;
+import org.powermock.core.classloader.annotations.PowerMockIgnore;
+import org.powermock.modules.junit4.PowerMockRunner;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.core.env.Environment;
+import org.springframework.test.util.ReflectionTestUtils;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import io.mosip.kernel.biometrics.constant.BiometricType;
 import io.mosip.kernel.biometrics.constant.QualityType;
 import io.mosip.kernel.biometrics.entities.BDBInfo;
@@ -11,7 +53,6 @@ import io.mosip.kernel.biometrics.entities.BIR;
 import io.mosip.kernel.biometrics.entities.BiometricRecord;
 import io.mosip.kernel.biometrics.entities.RegistryIDType;
 import io.mosip.kernel.biometrics.spi.CbeffUtil;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.code.ApiName;
@@ -38,36 +79,16 @@ import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequest
 import io.mosip.registration.processor.status.dto.InternalRegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.RegistrationStatusDto;
 import io.mosip.registration.processor.status.service.RegistrationStatusService;
-import io.mosip.registration.processor.verification.dto.*;
+import io.mosip.registration.processor.verification.dto.ManualVerificationDTO;
+import io.mosip.registration.processor.verification.dto.ManualVerificationStatus;
+import io.mosip.registration.processor.verification.dto.MatchDetail;
+import io.mosip.registration.processor.verification.dto.UserDto;
+import io.mosip.registration.processor.verification.dto.VerificationDecisionDto;
 import io.mosip.registration.processor.verification.exception.InvalidRidException;
 import io.mosip.registration.processor.verification.response.dto.VerificationResponseDTO;
 import io.mosip.registration.processor.verification.service.impl.VerificationServiceImpl;
 import io.mosip.registration.processor.verification.stage.VerificationStage;
-import org.apache.activemq.command.ActiveMQBytesMessage;
-import org.apache.activemq.util.ByteSequence;
-import org.json.simple.JSONObject;
-import org.junit.Before;
-import org.junit.Ignore;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.mockito.InjectMocks;
-import org.mockito.Mock;
-import org.mockito.Mockito;
-import org.mockito.Spy;
-import org.powermock.core.classloader.annotations.PowerMockIgnore;
-import org.powermock.modules.junit4.PowerMockRunner;
-import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.core.env.Environment;
-import org.springframework.test.util.ReflectionTestUtils;
-
-import java.sql.Timestamp;
-import java.util.*;
-
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Matchers.any;
+import io.mosip.registration.processor.verification.util.SaveVerificationRecordUtility;
 
 @RunWith(PowerMockRunner.class)
 @PowerMockIgnore({ "com.sun.org.apache.xerces.*", "javax.xml.*", "org.xml.*","javax.management.*", "javax.net.ssl.*" })
@@ -121,6 +142,9 @@ public class VerificationServiceTest {
 	@Mock
 	private RegistrationProcessorRestClientService registrationProcessorRestClientService;
 
+	@Mock
+	SaveVerificationRecordUtility saveVerificationRecordUtility;
+
 	private InternalRegistrationStatusDto registrationStatusDto;
 	private VerificationPKEntity PKId;
 	private ManualVerificationDTO manualVerificationDTO;
@@ -163,7 +187,7 @@ public class VerificationServiceTest {
 		resp = new VerificationResponseDTO();
 		resp.setId("verification");
 		resp.setRequestId("e2e59a9b-ce7c-41ae-a953-effb854d1205");
-		resp.setResponsetime(DateUtils.getCurrentDateTimeString());
+		resp.setResponsetime(DateUtils2.getCurrentDateTimeString());
 		resp.setReturnValue(1);
 
 		object = new MessageDTO();
@@ -182,7 +206,8 @@ public class VerificationServiceTest {
 			}
 
 			@Override
-			public void createConnection(String username, String password, String brokerUrl) {
+			public void createConnection(String username, String password, String brokerUrl,
+					List<String> trustedPackage) {
 
 			}
 		};
@@ -245,7 +270,7 @@ public class VerificationServiceTest {
 		verificationDecisionDto.setRegId("RegID");
 		verificationDecisionDto.setStatusCode("APPROVED");
 		verificationResponseDTO.setReturnValue(1);
-		verificationResponseDTO.setResponsetime(DateUtils.getCurrentDateTimeString());
+		verificationResponseDTO.setResponsetime(DateUtils2.getCurrentDateTimeString());
 		verificationResponseDTO.setId("mosip.manual.adjudication.adjudicate");
 		verificationResponseDTO.setRequestId("4d4f27d3-ec73-41c4-a384-bf87fce4969e");
 
@@ -503,5 +528,54 @@ public class VerificationServiceTest {
 
 		assertTrue(result);
 	}
-}
 
+
+	@Test
+	public void PacketManagerNonRecoverableExceptionTest() throws ApisResourceAccessException, PacketManagerException, IOException, JsonProcessingException {
+		Mockito.when(packetManagerService.getFields(anyString(), any(), anyString(), any())).thenThrow(new PacketManagerNonRecoverableException("exceptionCode","messahe"));
+		MessageDTO response = verificationService.process(object, queue, stageName);
+		assertFalse(response.getIsValid());
+		assertTrue(response.getInternalError());
+	}
+
+	@Test
+	public void testSuccessFlowWhenManualVerificationRejectedShouldSetRejectedStatus() throws com.fasterxml.jackson.core.JsonProcessingException {
+
+		Mockito.when(basePacketRepository.getAssignedVerificationRecord(anyString(), anyString())).thenReturn(entities);
+		String response = objectMapper.writeValueAsString(resp);
+		ActiveMQBytesMessage amq = new ActiveMQBytesMessage();
+		ByteSequence byteSeq = new ByteSequence();
+		byteSeq.setData(response.getBytes());
+		amq.setContent(byteSeq);
+		resp.setReturnValue(4);
+		ArgumentCaptor<MessageDTO> messageCaptor = ArgumentCaptor.forClass(MessageDTO.class);
+		Mockito.doNothing().when(manualAdjudicationStage).sendMessage(messageCaptor.capture());
+		boolean result = verificationService.updatePacketStatus(resp, stageName, queue);
+		assertTrue(result);
+		MessageDTO capturedMessage = messageCaptor.getValue();
+		assertNotNull(capturedMessage);
+		assertEquals(Boolean.FALSE, capturedMessage.getIsValid());
+		assertEquals(Boolean.FALSE, capturedMessage.getInternalError());
+	}
+
+	@Test
+	public void testSuccessFlowWhenManualVerificationApprovedShouldSetSuccessStatus() throws com.fasterxml.jackson.core.JsonProcessingException {
+
+		Mockito.when(basePacketRepository.getAssignedVerificationRecord(anyString(), anyString())).thenReturn(entities);
+		String response = objectMapper.writeValueAsString(resp);
+		ActiveMQBytesMessage amq = new ActiveMQBytesMessage();
+		ByteSequence byteSeq = new ByteSequence();
+		byteSeq.setData(response.getBytes());
+		amq.setContent(byteSeq);
+		resp.setReturnValue(1);
+		ArgumentCaptor<MessageDTO> messageCaptor = ArgumentCaptor.forClass(MessageDTO.class);
+		Mockito.doNothing().when(manualAdjudicationStage).sendMessage(messageCaptor.capture());
+		boolean result = verificationService.updatePacketStatus(resp, stageName, queue);
+		assertTrue(result);
+		MessageDTO capturedMessage = messageCaptor.getValue();
+		assertNotNull(capturedMessage);
+		assertEquals(Boolean.TRUE, capturedMessage.getIsValid());
+		assertEquals(Boolean.FALSE, capturedMessage.getInternalError());
+	}
+
+}

@@ -21,13 +21,11 @@ import org.mockito.runners.MockitoJUnitRunner;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.mosip.registration.processor.core.abstractverticle.EventDTO;
+import io.mosip.registration.processor.core.abstractverticle.HealthCheckDTO;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.abstractverticle.MosipEventBus;
-import io.mosip.registration.processor.core.code.ApiName;
-import io.mosip.registration.processor.core.code.EventId;
-import io.mosip.registration.processor.core.code.EventName;
-import io.mosip.registration.processor.core.code.EventType;
+import io.mosip.registration.processor.core.code.AuditLogConstant;
 import io.mosip.registration.processor.core.code.RegistrationTransactionStatusCode;
 import io.mosip.registration.processor.core.exception.WorkflowActionException;
 import io.mosip.registration.processor.core.http.ResponseWrapper;
@@ -77,6 +75,18 @@ public class WorkflowActionJobTest {
 				public void send(MessageBusAddress toAddress, MessageDTO message) {
 
 				}
+
+				@Override
+				public void consumerHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
+
+				}
+
+				@Override
+				public void senderHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
+
+				}
 			};
 		}
 
@@ -110,8 +120,8 @@ public class WorkflowActionJobTest {
 		AuditResponseDto auditResponseDto = new AuditResponseDto();
 		ResponseWrapper<AuditResponseDto> responseWrapper = new ResponseWrapper<>();
 		responseWrapper.setResponse(auditResponseDto);
-		auditLogRequestBuilder.createAuditRequestBuilder("test case description", EventId.RPR_401.toString(),
-				EventName.ADD.toString(), EventType.BUSINESS.toString(), "1234testcase", ApiName.AUDIT);
+		Mockito.when(auditLogRequestBuilder.createAuditRequestBuilder(Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any(),Mockito.any(),Mockito.any(AuditLogConstant.class)))
+		.thenReturn(null);
 	}
 
 	@Test

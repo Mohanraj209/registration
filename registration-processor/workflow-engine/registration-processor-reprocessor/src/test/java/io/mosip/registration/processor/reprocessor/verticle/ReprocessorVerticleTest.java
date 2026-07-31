@@ -20,6 +20,7 @@ import org.mockito.runners.MockitoJUnitRunner;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import io.mosip.registration.processor.core.abstractverticle.EventDTO;
+import io.mosip.registration.processor.core.abstractverticle.HealthCheckDTO;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
 import io.mosip.registration.processor.core.abstractverticle.MosipEventBus;
@@ -37,6 +38,7 @@ import io.mosip.registration.processor.core.spi.eventbus.EventHandler;
 import io.mosip.registration.processor.core.spi.restclient.RegistrationProcessorRestClientService;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.rest.client.audit.dto.AuditResponseDto;
+import io.mosip.registration.processor.status.code.RegistrationStatusCode;
 import io.mosip.registration.processor.status.code.RegistrationType;
 import io.mosip.registration.processor.status.dto.InternalRegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.RegistrationStatusDto;
@@ -79,6 +81,18 @@ public class ReprocessorVerticleTest {
 				public void send(MessageBusAddress toAddress, MessageDTO message) {
 
 				}
+
+				@Override
+				public void consumerHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
+
+				}
+
+				@Override
+				public void senderHealthCheck(Handler<HealthCheckDTO> eventHandler, String address) {
+					// TODO Auto-generated method stub
+
+				}
 			};
 		}
 
@@ -106,6 +120,17 @@ public class ReprocessorVerticleTest {
 		 ReflectionTestUtils.setField(reprocessorVerticle, "fetchSize", 2);
          ReflectionTestUtils.setField(reprocessorVerticle, "elapseTime", 21600);
          ReflectionTestUtils.setField(reprocessorVerticle, "reprocessCount", 3);
+		 ReflectionTestUtils.setField(reprocessorVerticle, "reprocessExcludeStageNames", new ArrayList<>());
+			List<String> reprocessRestartTriggerFilterList = new ArrayList<>();
+			reprocessRestartTriggerFilterList.add("DemodedupStage:Success");
+			reprocessRestartTriggerFilterList.add("BioDedupeStage:*");
+			reprocessRestartTriggerFilterList.add("UinGeneratorStage:reprocess");
+			reprocessRestartTriggerFilterList.add("BioDedupeStage:reprocess");
+
+			ReflectionTestUtils.setField(reprocessorVerticle, "reprocessRestartTriggerFilter",
+					reprocessRestartTriggerFilterList);
+			ReflectionTestUtils.setField(reprocessorVerticle, "reprocessRestartFromStage",
+					"SecurezoneNotificationStage");
          Field auditLog = AuditLogRequestBuilder.class.getDeclaredField("registrationProcessorRestService");
          auditLog.setAccessible(true);
          @SuppressWarnings("unchecked")
@@ -145,7 +170,7 @@ public class ReprocessorVerticleTest {
 		registrationStatusDto1.setRegistrationType("NEW");
 		registrationStatusDto1.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.SUCCESS.toString());
 		dtolist.add(registrationStatusDto1);
-		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList()))
+		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList(), anyList()))
 				.thenReturn(dtolist);
 		reprocessorVerticle.process(dto);
 
@@ -174,7 +199,7 @@ public class ReprocessorVerticleTest {
 		registrationStatusDto1.setRegistrationType("NEW");
 		registrationStatusDto1.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.SUCCESS.toString());
 		dtolist.add(registrationStatusDto1);
-		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList()))
+		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList(), anyList()))
 				.thenReturn(dtolist);
 		reprocessorVerticle.process(dto);
 
@@ -188,7 +213,7 @@ public class ReprocessorVerticleTest {
 	 */
 	@Test
 	public void exceptionTest() throws Exception {
-		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(),anyLong(), anyInt(), anyList()))
+		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(),anyLong(), anyInt(), anyList(), anyList()))
 				.thenReturn(null);
 		dto = reprocessorVerticle.process(dto);
 		assertEquals(null, dto.getIsValid());
@@ -205,7 +230,7 @@ public class ReprocessorVerticleTest {
 
 	@Test
 	public void TablenotAccessibleExceptionTest() throws Exception {
-		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList()))
+		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList(), anyList()))
 				.thenThrow(new TablenotAccessibleException("") {
 				});
 
@@ -240,9 +265,32 @@ public class ReprocessorVerticleTest {
 		reprocessorDtoList.add(registrationStatusDto1);
 		Mockito.when(registrationStatusService.getResumablePackets(anyInt()))
 				.thenReturn(dtolist);
-		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList()))
+		Mockito.when(registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList(), anyList()))
 				.thenReturn(reprocessorDtoList);
 		reprocessorVerticle.process(dto);
 
 	}
+
+	@Test
+	public void testProcessWithRestartFromStage() throws TablenotAccessibleException,
+			PacketManagerException,
+			ApisResourceAccessException, WorkflowActionException {
+
+		List<InternalRegistrationStatusDto> dtolist = new ArrayList<>();
+		InternalRegistrationStatusDto registrationStatusDto = new InternalRegistrationStatusDto();
+
+		registrationStatusDto.setRegistrationId("2018701130000410092018110735");
+		registrationStatusDto.setRegistrationType(RegistrationType.NEW.toString());
+		registrationStatusDto.setRegistrationStageName("BioDedupeStage");
+		registrationStatusDto.setReProcessRetryCount(0);
+		registrationStatusDto.setStatusCode(RegistrationStatusCode.PROCESSING.toString());
+		registrationStatusDto.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.REPROCESS.toString());
+		dtolist.add(registrationStatusDto);
+		Mockito.when(
+				registrationStatusService.getUnProcessedPackets(anyInt(), anyLong(), anyInt(), anyList(), anyList()))
+				.thenReturn(dtolist);
+		reprocessorVerticle.process(dto);
+
+	}
+
 }

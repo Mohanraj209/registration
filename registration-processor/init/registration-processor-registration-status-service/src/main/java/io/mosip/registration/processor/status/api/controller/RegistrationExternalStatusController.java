@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.stream.Collectors;
 
+import io.mosip.kernel.core.util.DateUtils2;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
@@ -18,10 +19,8 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
 import io.mosip.registration.processor.core.util.DigitalSignatureUtility;
 import io.mosip.registration.processor.status.code.RegistrationExternalStatusCode;
@@ -38,7 +37,6 @@ import io.mosip.registration.processor.status.service.RegistrationStatusService;
 import io.mosip.registration.processor.status.service.SyncRegistrationService;
 import io.mosip.registration.processor.status.sync.response.dto.RegExternalStatusResponseDTO;
 import io.mosip.registration.processor.status.validator.RegistrationExternalStatusRequestValidator;
-
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
@@ -70,6 +68,9 @@ public class RegistrationExternalStatusController {
 	
 	@Value("${registration.processor.signature.isEnabled}")
 	private Boolean isEnabled;
+	
+	@Autowired
+	ObjectMapper objMp;
 	
 	private static final String REG_EXTERNAL_STATUS_SERVICE_ID = "mosip.registration.processor.registration.external.status.id";
 	private static final String RESPONSE_SIGNATURE = "Response-Signature";
@@ -124,17 +125,16 @@ public class RegistrationExternalStatusController {
 			if (registrationsList != null && !registrationsList.isEmpty()) {
 				registrations.addAll(registrationsList);
 			}
-
+			RegExternalStatusResponseDTO response = buildRegistrationStatusResponse(registrations,
+					registrationExternalStatusRequestDTO.getRequest());
+			String res = objMp.writeValueAsString(response);
 			if (isEnabled) {
-				RegExternalStatusResponseDTO response = buildRegistrationStatusResponse(registrations,
-						registrationExternalStatusRequestDTO.getRequest());
-				Gson gson = new GsonBuilder().serializeNulls().create();
 				HttpHeaders headers = new HttpHeaders();
-				headers.add(RESPONSE_SIGNATURE, digitalSignatureUtility.getDigitalSignature(gson.toJson(response)));
-				return ResponseEntity.status(HttpStatus.OK).headers(headers).body(gson.toJson(response));
+				headers.add(RESPONSE_SIGNATURE, digitalSignatureUtility.getDigitalSignature(res));
+				return ResponseEntity.status(HttpStatus.OK).headers(headers).body(res);
 			}
 			return ResponseEntity.status(HttpStatus.OK)
-					.body(buildRegistrationStatusResponse(registrations, registrationExternalStatusRequestDTO.getRequest()));
+					.body(res);
 		} catch (RegStatusAppException e) {
 			throw new RegStatusAppException(PlatformErrorMessages.RPR_RGS_DATA_VALIDATION_FAILED, e);
 		} catch (Exception e) {
@@ -149,7 +149,7 @@ public class RegistrationExternalStatusController {
 		if (Objects.isNull(response.getId())) {
 			response.setId(env.getProperty(REG_EXTERNAL_STATUS_SERVICE_ID));
 		}
-		response.setResponsetime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		response.setResponsetime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		response.setVersion(env.getProperty(REG_EXTERNAL_STATUS_APPLICATION_VERSION));
 		response.setResponse(registrations);
 		List<RegistrationExternalStatusSubRequestDto> requestIdsNotAvailable = requestIds.stream()

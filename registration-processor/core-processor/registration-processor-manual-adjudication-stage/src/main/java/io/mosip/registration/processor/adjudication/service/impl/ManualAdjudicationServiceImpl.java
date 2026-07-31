@@ -1,19 +1,60 @@
 package io.mosip.registration.processor.adjudication.service.impl;
 
+import static io.mosip.registration.processor.adjudication.constants.ManualAdjudicationConstants.DATETIME_PATTERN;
+
+import java.io.IOException;
+import java.net.MalformedURLException;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.UUID;
+import java.util.stream.Collectors;
+
+import io.mosip.kernel.core.util.DateUtils2;
+import io.mosip.registration.processor.core.exception.PacketManagerNonRecoverableException;
+import org.apache.commons.lang.StringUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
+import org.json.simple.JSONObject;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.CollectionUtils;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Lists;
+
 import io.mosip.kernel.biometrics.entities.BiometricRecord;
 import io.mosip.kernel.biometrics.spi.CbeffUtil;
 import io.mosip.kernel.core.logger.spi.Logger;
 import io.mosip.kernel.core.util.CryptoUtil;
-import io.mosip.kernel.core.util.DateUtils;
 import io.mosip.kernel.core.util.JsonUtils;
 import io.mosip.kernel.core.util.exception.JsonProcessingException;
 import io.mosip.registration.processor.adjudication.constants.ManualAdjudicationConstants;
 import io.mosip.registration.processor.adjudication.dto.DataShareRequestDto;
 import io.mosip.registration.processor.adjudication.dto.ManualVerificationStatus;
-import io.mosip.registration.processor.adjudication.exception.*;
-import io.mosip.registration.processor.adjudication.request.dto.*;
+import io.mosip.registration.processor.adjudication.exception.DataShareException;
+import io.mosip.registration.processor.adjudication.exception.InvalidFileNameException;
+import io.mosip.registration.processor.adjudication.exception.InvalidRidException;
+import io.mosip.registration.processor.adjudication.exception.MatchedRefNotExistsException;
+import io.mosip.registration.processor.adjudication.exception.NoRecordAssignedException;
+import io.mosip.registration.processor.adjudication.request.dto.Filter;
+import io.mosip.registration.processor.adjudication.request.dto.Gallery;
+import io.mosip.registration.processor.adjudication.request.dto.ManualAdjudicationRequestDTO;
+import io.mosip.registration.processor.adjudication.request.dto.ReferenceIds;
+import io.mosip.registration.processor.adjudication.request.dto.ReferenceURL;
+import io.mosip.registration.processor.adjudication.request.dto.ShareableAttributes;
+import io.mosip.registration.processor.adjudication.request.dto.Source;
 import io.mosip.registration.processor.adjudication.response.dto.Candidate;
 import io.mosip.registration.processor.adjudication.response.dto.ManualAdjudicationResponseDTO;
 import io.mosip.registration.processor.adjudication.service.ManualAdjudicationService;
@@ -21,11 +62,19 @@ import io.mosip.registration.processor.adjudication.stage.ManualAdjudicationStag
 import io.mosip.registration.processor.adjudication.util.ManualVerificationUpdateUtility;
 import io.mosip.registration.processor.core.abstractverticle.MessageBusAddress;
 import io.mosip.registration.processor.core.abstractverticle.MessageDTO;
-import io.mosip.registration.processor.core.code.*;
+import io.mosip.registration.processor.core.code.ApiName;
 import io.mosip.registration.processor.core.code.EventId;
 import io.mosip.registration.processor.core.code.EventName;
 import io.mosip.registration.processor.core.code.EventType;
-import io.mosip.registration.processor.core.constant.*;
+import io.mosip.registration.processor.core.code.ModuleName;
+import io.mosip.registration.processor.core.code.RegistrationExceptionTypeCode;
+import io.mosip.registration.processor.core.code.RegistrationTransactionStatusCode;
+import io.mosip.registration.processor.core.code.RegistrationTransactionTypeCode;
+import io.mosip.registration.processor.core.constant.LoggerFileConstant;
+import io.mosip.registration.processor.core.constant.MappingJsonConstants;
+import io.mosip.registration.processor.core.constant.PolicyConstant;
+import io.mosip.registration.processor.core.constant.ProviderStageName;
+import io.mosip.registration.processor.core.constant.RegistrationType;
 import io.mosip.registration.processor.core.exception.ApisResourceAccessException;
 import io.mosip.registration.processor.core.exception.PacketManagerException;
 import io.mosip.registration.processor.core.exception.util.PlatformErrorMessages;
@@ -51,33 +100,13 @@ import io.mosip.registration.processor.packet.storage.entity.ManualVerificationE
 import io.mosip.registration.processor.packet.storage.repository.BasePacketRepository;
 import io.mosip.registration.processor.packet.storage.utils.PriorityBasedPacketManagerService;
 import io.mosip.registration.processor.packet.storage.utils.Utilities;
+import io.mosip.registration.processor.packet.storage.utils.Utility;
 import io.mosip.registration.processor.rest.client.audit.builder.AuditLogRequestBuilder;
 import io.mosip.registration.processor.status.code.RegistrationStatusCode;
 import io.mosip.registration.processor.status.dto.InternalRegistrationStatusDto;
 import io.mosip.registration.processor.status.dto.RegistrationStatusDto;
 import io.mosip.registration.processor.status.exception.TablenotAccessibleException;
 import io.mosip.registration.processor.status.service.RegistrationStatusService;
-import org.apache.commons.lang.StringUtils;
-import org.apache.commons.lang3.exception.ExceptionUtils;
-import org.json.simple.JSONObject;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.core.env.Environment;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.http.MediaType;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
-import org.springframework.util.CollectionUtils;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
-
-import java.io.IOException;
-import java.net.MalformedURLException;
-import java.util.*;
-import java.util.Map.Entry;
-import java.util.stream.Collectors;
-
-import static io.mosip.registration.processor.adjudication.constants.ManualAdjudicationConstants.DATETIME_PATTERN;
 
 /**
  * The Class ManualAdjudicationServiceImpl.
@@ -138,7 +167,10 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 	private CbeffUtil cbeffutil;
 
 	@Autowired
-	private Utilities utility;
+	private Utilities utilities;
+
+	@Autowired
+	private Utility utility;
 
 	@Autowired
 	private IdRepoService idRepoService;
@@ -178,6 +210,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 
 	@Autowired
 	private ManualVerificationUpdateUtility manualVerificationUpdateUtility;
+
 
 	/** The Constant PROTOCOL. */
 	public static final String PROTOCOL = "https";
@@ -230,7 +263,6 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 				description.setCode(PlatformSuccessMessages.RPR_MANUAL_VERIFICATION_RESEND.getCode());
 				messageDTO.setInternalError(true);
 				messageDTO.setIsValid(isTransactionSuccessful);
-				manualAdjudicationStage.sendMessage(messageDTO);
 			} else {
 				// call success flow and process the response received from manual verification system
 				isTransactionSuccessful = successFlow(
@@ -287,7 +319,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 					: description.getCode();
 			String moduleName = ModuleName.MANUAL_ADJUDICATION.toString();
 			registrationStatusService.updateRegistrationStatus(registrationStatusDto, moduleId, moduleName);
-
+			manualAdjudicationStage.sendMessage(messageDTO);
 			String eventId = isTransactionSuccessful ? EventId.RPR_402.toString() : EventId.RPR_405.toString();
 			String eventName = eventId.equalsIgnoreCase(EventId.RPR_402.toString()) ? EventName.UPDATE.toString()
 					: EventName.EXCEPTION.toString();
@@ -378,6 +410,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			mosipQueueManager.send(queue, JsonUtils.javaObjectToJsonString(mar).getBytes(), mvRequestAddress, mvRequestMessageTTL);
 		regProcLogger.debug(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 				refId, "ManualVerificationServiceImpl::pushRequestToQueue()::entry");
+
 	}
 
 	private String getDataShareUrl(String id, String process) throws Exception {
@@ -405,7 +438,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 
 
 			// set biometrics
-			JSONObject regProcessorIdentityJson = utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
+			JSONObject regProcessorIdentityJson = utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
 			String individualBiometricsLabel = JsonUtil.getJSONValue(
 					JsonUtil.getJSONObject(regProcessorIdentityJson, MappingJsonConstants.INDIVIDUAL_BIOMETRICS),
 					MappingJsonConstants.VALUE);
@@ -442,7 +475,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 		List<Documents> documents=responseDTO.getDocuments();
 		requestDto=setDocuments(policyMap, requestDto, null, null, documents);
 
-		JSONObject regProcessorIdentityJson = utility.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
+		JSONObject regProcessorIdentityJson = utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.IDENTITY);
 		String individualBiometricsLabel = JsonUtil.getJSONValue(
 				JsonUtil.getJSONObject(regProcessorIdentityJson, MappingJsonConstants.INDIVIDUAL_BIOMETRICS),
 				MappingJsonConstants.VALUE);
@@ -522,7 +555,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 		return demographicMap;
 	}
 	private DataShareRequestDto setDocuments(Map<String,String> policyMap,DataShareRequestDto requestDto, String id, String process, List<Documents> documents) throws ApisResourceAccessException, PacketManagerException, JsonProcessingException, IOException{
-		JSONObject docJson = utility.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT);
+		JSONObject docJson = utilities.getRegistrationProcessorMappingJson(MappingJsonConstants.DOCUMENT);
 		for (Object doc : docJson.keySet()) {
 			if (doc != null) {
 				HashMap docmap = (HashMap) docJson.get(doc.toString());
@@ -636,7 +669,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 		req.setId(ManualAdjudicationConstants.MANUAL_ADJUDICATION_ID);
 		req.setVersion(ManualAdjudicationConstants.VERSION);
 		req.setRequestId(mve.get(0).getRequestId());
-		req.setRequesttime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		req.setRequesttime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		req.setReferenceId(mve.get(0).getRegId());
 		InternalRegistrationStatusDto registrationStatusDto = null;
 		registrationStatusDto = registrationStatusService.getRegistrationStatus(
@@ -645,6 +678,10 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			req.setReferenceURL(
 					getDataShareUrl(mve.get(0).getRegId(), registrationStatusDto.getRegistrationType()));
 
+		}catch (PacketManagerNonRecoverableException ex){
+			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					ex.getErrorCode(), ex.getErrorText());
+			throw ex;
 		} catch (PacketManagerException | ApisResourceAccessException ex) {
 			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 					ex.getErrorCode(), ex.getErrorText());
@@ -661,6 +698,11 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			try {
 				r.setReferenceId(e.getId().getMatchedRefId());
 				r.setReferenceURL(getDataShareUrl(e.getId().getMatchedRefId(),registrationStatusDto1.getRegistrationType()));
+				referenceIds.add(r);
+			} catch(PacketManagerNonRecoverableException ex){
+				regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
+						LoggerFileConstant.REGISTRATIONID.toString(), ex.getErrorCode(), ex.getErrorText());
+				r.setReferenceURL(null);
 				referenceIds.add(r);
 			} catch (PacketManagerException | ApisResourceAccessException ex) {
 				regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
@@ -692,7 +734,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 		req.setId(ManualAdjudicationConstants.MANUAL_ADJUDICATION_ID);
 		req.setVersion(ManualAdjudicationConstants.VERSION);
 		req.setRequestId(mve.get(0).getRequestId());
-		req.setRequesttime(DateUtils.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
+		req.setRequesttime(DateUtils2.getUTCCurrentDateTimeString(env.getProperty(DATETIME_PATTERN)));
 		req.setReferenceId(mve.get(0).getRegId());
 		InternalRegistrationStatusDto registrationStatusDto = null;
 		registrationStatusDto = registrationStatusService.getRegistrationStatus(
@@ -701,7 +743,11 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			req.setReferenceURL(
 					JsonUtil.objectMapperObjectToJson(addReferenceURLs(mve.get(0).getRegId(), registrationStatusDto)));
 
-		} catch (PacketManagerException | ApisResourceAccessException ex) {
+		} catch(PacketManagerNonRecoverableException ex){
+			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
+					ex.getErrorCode(), ex.getErrorText());
+			throw ex;
+		}catch (PacketManagerException | ApisResourceAccessException ex) {
 			regProcLogger.error(LoggerFileConstant.SESSIONID.toString(), LoggerFileConstant.REGISTRATIONID.toString(),
 					ex.getErrorCode(), ex.getErrorText());
 			throw ex;
@@ -718,7 +764,12 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 				r.setReferenceId(e.getId().getMatchedRefId());
 				r.setReferenceURL(JsonUtil.objectMapperObjectToJson(addReferenceURLs(e.getId().getMatchedRefId(),registrationStatusDto1)));
 				referenceIds.add(r);
-			} catch (PacketManagerException | ApisResourceAccessException ex) {
+			} catch(PacketManagerNonRecoverableException ex){
+				regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
+						LoggerFileConstant.REGISTRATIONID.toString(), ex.getErrorCode(), ex.getErrorText());
+				r.setReferenceURL(null);
+				referenceIds.add(r);
+			}catch (PacketManagerException | ApisResourceAccessException ex) {
 				regProcLogger.error(LoggerFileConstant.SESSIONID.toString(),
 						LoggerFileConstant.REGISTRATIONID.toString(), ex.getErrorCode(), ex.getErrorText());
 				r.setReferenceURL(null);
@@ -755,7 +806,8 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			referenceURLs.add(referenceURL);
 			if(registrationStatusDto.getRegistrationType().equalsIgnoreCase(RegistrationType.UPDATE.name())
 					|| registrationStatusDto.getRegistrationType().equalsIgnoreCase(RegistrationType.RES_UPDATE.name())) {
-				String uinField = utility.getUIn(id, registrationStatusDto.getRegistrationType(), ProviderStageName.MANUAL_ADJUDICATION);
+				String uinField = utility.getUIn(id, registrationStatusDto.getRegistrationType(),
+						ProviderStageName.MANUAL_ADJUDICATION);
 				ReferenceURL referenceURL1=new ReferenceURL();
 				referenceURL1.setSource(ID_REPO);
 				referenceURL1.setStatus(PROCESSED);
@@ -803,7 +855,7 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			registrationStatusDto.setSubStatusCode(StatusUtil.RPR_MANUAL_VERIFICATION_SENT_TO_QUEUE.getCode());
 			registrationStatusDto.setStatusCode(RegistrationStatusCode.PROCESSING.toString());
 			registrationStatusDto
-					.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.SUCCESS.toString());
+					.setLatestTransactionStatusCode(RegistrationTransactionStatusCode.IN_PROGRESS.toString());
 
 		} catch (DataShareException de) {
 			registrationStatusDto.setStatusCode(RegistrationStatusCode.FAILED.name());
@@ -921,7 +973,6 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 				}
 			}
 			messageDTO.setIsValid(isTransactionSuccessful);
-			manualAdjudicationStage.sendMessage(messageDTO);
 			registrationStatusDto.setStatusComment(StatusUtil.MANUAL_VERIFIER_APPROVED_PACKET.getMessage());
 			registrationStatusDto.setSubStatusCode(StatusUtil.MANUAL_VERIFIER_APPROVED_PACKET.getCode());
 			registrationStatusDto.setStatusCode(RegistrationStatusCode.PROCESSING.toString());
@@ -941,7 +992,6 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			description.setMessage(PlatformErrorMessages.RPR_MANUAL_VERIFICATION_REJECTED.getMessage());
 			description.setCode(PlatformErrorMessages.RPR_MANUAL_VERIFICATION_REJECTED.getCode());
 			messageDTO.setIsValid(Boolean.FALSE);
-			manualAdjudicationStage.sendMessage(messageDTO);
 		} else {
 			registrationStatusDto.setStatusCode(RegistrationStatusCode.PROCESSING.toString());
 			registrationStatusDto.setStatusComment(StatusUtil.RPR_MANUAL_VERIFICATION_RESEND.getMessage());
@@ -952,7 +1002,6 @@ public class ManualAdjudicationServiceImpl implements ManualAdjudicationService 
 			description.setMessage(PlatformErrorMessages.RPR_MANUAL_VERIFICATION_RESEND.getMessage());
 			description.setCode(PlatformErrorMessages.RPR_MANUAL_VERIFICATION_RESEND.getCode());
 			messageDTO.setIsValid(Boolean.FALSE);
-			manualAdjudicationStage.sendMessage(messageDTO);
 		}
 		List<ManualVerificationEntity> maVerificationEntity = new ArrayList<>();
 		for(ManualVerificationEntity manualVerificationEntity: entities) {

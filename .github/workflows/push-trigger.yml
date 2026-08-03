@@ -28,6 +28,8 @@ jobs:
     with:
       SERVICE_LOCATION: ./registration-processor
       BUILD_ARTIFACT: registration
+      JDK_VERSION: "21"
+      JDK_DISTRIBUTION: "temurin"
     secrets:
       OSSRH_USER: ${{ secrets.OSSRH_USER }}
       OSSRH_SECRET: ${{ secrets.OSSRH_SECRET }}
